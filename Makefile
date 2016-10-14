@@ -7,7 +7,7 @@ SOURCES := $(wildcard *.cc)
 OBJECTS := $(SOURCES:.cc=.o)
 INCLUDES := -Idocopt.cpp -I$(RAMCLOUD_DIR)/src -I$(RAMCLOUD_DIR)/obj.master
 CCFLAGS := --std=c++11 $(INCLUDES) -g
-TARGETS := ramdis
+TARGETS := ramdis-cli
 
 all: $(TARGETS)
 
