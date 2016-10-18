@@ -2,7 +2,6 @@
 A RAMCloud-based implementation of Redis
 
 # Instructions
- - `git submodule update`
  - Modify the `Makefile` to point to your local RAMCloud directory.
  - Set `LD_LIBRARY_PATH` to the directory of your libramcloud.so library.
  - `make`
