@@ -24,11 +24,11 @@ TARGETS := ramdis-server
 
 all: $(LIBRAMDIS_NAME).so $(LIBRAMDIS_NAME).a $(TARGETS)
 
-$(LIBRAMDIS_NAME).so: $(LIBRAMDIS_NAME:lib%=%.o)
+$(LIBRAMDIS_NAME).so: $(LIBRAMDIS_NAME:lib%=%.o) net.o sds.o
 	$(CC) -shared -Wl,-soname,$(LIBRAMDIS_SONAME) -o $@ $(LDFLAGS) $^
 	ln -f -s $@ $(LIBRAMDIS_SONAME)
 
-$(LIBRAMDIS_NAME).a: $(LIBRAMDIS_NAME:lib%=%.o)
+$(LIBRAMDIS_NAME).a: $(LIBRAMDIS_NAME:lib%=%.o) net.o sds.o
 	ar rcs $@ $^
 
 $(LIBRAMDIS_NAME:lib%=%.o): $(LIBRAMDIS_NAME:lib%=%.cc) $(LIBRAMDIS_NAME:lib%=%.h)
@@ -49,6 +49,11 @@ $(TARGETS): $(DOCOPT_DIR)/docopt.o $(TARGETS:=.o)
 %.o: %.cpp
 	$(CC) -std=c++11 -c $< $(CFLAGS) -g -o $@
 
+net.o: net.c net.h
+	$(CC) -std=c++11 -c $< $(CFLAGS) -g -o $@ -fPIC
+	
+sds.o: sds.c sds.h
+	$(CC) -std=c++11 -c $< $(CFLAGS) -g -o $@ -fPIC
 
 clean:
 	rm -rf $(LIBRAMDIS_NAME).so $(LIBRAMDIS_NAME).a $(LIBRAMDIS_SONAME) $(TARGETS) *.o
