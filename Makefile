@@ -1,7 +1,7 @@
 CC := g++
 
 # Convenience variables for making Ramdis (hiredis-based) library
-LIBRAMDIS_NAME := libramdis
+LIBRAMDIS_NAME := libhiramdis
 LIBRAMDIS_MAJOR := 0
 LIBRAMDIS_MINOR := 0
 LIBRAMDIS_SONAME := $(LIBRAMDIS_NAME).so.$(LIBRAMDIS_MAJOR).$(LIBRAMDIS_MINOR)
@@ -24,14 +24,14 @@ TARGETS := ramdis-server
 
 all: $(LIBRAMDIS_NAME).so $(LIBRAMDIS_NAME).a $(TARGETS)
 
-$(LIBRAMDIS_NAME).so: ramdis.o
+$(LIBRAMDIS_NAME).so: $(LIBRAMDIS_NAME:lib%=%.o)
 	$(CC) -shared -Wl,-soname,$(LIBRAMDIS_SONAME) -o $@ $(LDFLAGS) $^
 	ln -f -s $@ $(LIBRAMDIS_SONAME)
 
-$(LIBRAMDIS_NAME).a: ramdis.o
+$(LIBRAMDIS_NAME).a: $(LIBRAMDIS_NAME:lib%=%.o)
 	ar rcs $@ $^
 
-ramdis.o: ramdis.cc ramdis.h
+$(LIBRAMDIS_NAME:lib%=%.o): $(LIBRAMDIS_NAME:lib%=%.cc) $(LIBRAMDIS_NAME:lib%=%.h)
 	$(CC) -std=c++11 -c $< $(CFLAGS) -fPIC
 
 $(TARGETS): $(DOCOPT_DIR)/docopt.o $(TARGETS:=.o)

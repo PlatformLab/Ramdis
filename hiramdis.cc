@@ -36,7 +36,7 @@
 #include <errno.h>
 #include <ctype.h>
 
-#include "ramdis.h"
+#include "hiramdis.h"
 #include "RamCloud.h"
 #include "docopt.h"
 
