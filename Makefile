@@ -1,37 +1,54 @@
-LIBNAME=libramdis
+CC := g++
 
-OBJ=ramdis.o
+# Convenience variables for making Ramdis (hiredis-based) library
+LIBRAMDIS_NAME := libramdis
+LIBRAMDIS_MAJOR := 0
+LIBRAMDIS_MINOR := 0
+LIBRAMDIS_SONAME := $(LIBRAMDIS_NAME).so.$(LIBRAMDIS_MAJOR).$(LIBRAMDIS_MINOR)
 
-RAMDIS_MAJOR=0
-RAMDIS_MINOR=0
-
-DYLIBSUFFIX=so
-STLIBSUFFIX=a
-DYLIB_MINOR_NAME=$(LIBNAME).$(DYLIBSUFFIX).$(RAMDIS_MAJOR).$(RAMDIS_MINOR)
-DYLIB_MAJOR_NAME=$(LIBNAME).$(DYLIBSUFFIX).$(RAMDIS_MAJOR)
-DYLIBNAME=$(LIBNAME).$(DYLIBSUFFIX)
-DYLIB_MAKE_CMD=$(CC) -shared -Wl,-soname,$(DYLIB_MINOR_NAME) -o $(DYLIBNAME) $(LDFLAGS)
-STLIBNAME=$(LIBNAME).$(STLIBSUFFIX)
-STLIB_MAKE_CMD=ar rcs $(STLIBNAME)
-
+# Includes and library dependencies of RAMCloud
 RAMCLOUD_SRC := $(HOME)/RAMCloud/src
 RAMCLOUD_LIB := $(HOME)/RAMCloud/obj.master
+RC_CLIENT_INCLUDES := -I$(RAMCLOUD_SRC) -I$(RAMCLOUD_LIB)
+RC_CLIENT_LIBDEPS := -L$(RAMCLOUD_LIB) -lramcloud -lpcrecpp -lboost_program_options -lprotobuf -lrt -lboost_filesystem -lboost_system -lpthread -lssl -lcrypto
 
-CC := g++
-LDFLAGS := -L$(RAMCLOUD_LIB) -lramcloud -lpcrecpp -lboost_program_options -lprotobuf -lrt -lboost_filesystem -lboost_system -lpthread -lssl -lcrypto
-CFLAGS := -Idocopt.cpp -I$(RAMCLOUD_SRC) -I$(RAMCLOUD_LIB) -fPIC
+# Includes and library dependencies of docopt
+DOCOPT_DIR := ./docopt.cpp
+DOCOPT_INCLUDES := -I$(DOCOPT_DIR)
+DOCOPT_LIBDEPS := -L$(DOCOPT_DIR)
 
-all: $(DYLIBNAME) $(STLIBNAME)
+CFLAGS := $(DOCOPT_INCLUDES) $(RC_CLIENT_INCLUDES)
+LDFLAGS := $(DOCOPT_LIBDEPS) $(RC_CLIENT_LIBDEPS)
 
-$(DYLIBNAME): $(OBJ)
-	$(DYLIB_MAKE_CMD) $(OBJ)
-	ln -f -s $(DYLIBNAME) $(DYLIB_MINOR_NAME)
+TARGETS := ramdis-server
 
-$(STLIBNAME): $(OBJ)
-	$(STLIB_MAKE_CMD) $(OBJ)
+all: $(LIBRAMDIS_NAME).so $(LIBRAMDIS_NAME).a $(TARGETS)
+
+$(LIBRAMDIS_NAME).so: ramdis.o
+	$(CC) -shared -Wl,-soname,$(LIBRAMDIS_SONAME) -o $@ $(LDFLAGS) $^
+	ln -f -s $@ $(LIBRAMDIS_SONAME)
+
+$(LIBRAMDIS_NAME).a: ramdis.o
+	ar rcs $@ $^
+
+ramdis.o: ramdis.cc ramdis.h
+	$(CC) -std=c++11 -c $< $(CFLAGS) -fPIC
+
+$(TARGETS): $(DOCOPT_DIR)/docopt.o $(TARGETS:=.o)
+	$(CC) -o $@ $^ $(LDFLAGS) 
+
+%.o: %.cc %.h
+	$(CC) -std=c++11 -c $< $(CFLAGS) -g -o $@
 
 %.o: %.cc
-	$(CC) -std=c++11 -c $(CFLAGS) $<
+	$(CC) -std=c++11 -c $< $(CFLAGS) -g -o $@
+
+%.o: %.cpp %.h
+	$(CC) -std=c++11 -c $< $(CFLAGS) -g -o $@
+
+%.o: %.cpp
+	$(CC) -std=c++11 -c $< $(CFLAGS) -g -o $@
+
 
 clean:
-	rm -rf $(DYLIBNAME) $(STLIBNAME) $(DYLIB_MINOR_NAME) *.o
+	rm -rf $(LIBRAMDIS_NAME).so $(LIBRAMDIS_NAME).a $(LIBRAMDIS_SONAME) $(TARGETS) *.o
