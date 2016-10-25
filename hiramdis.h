@@ -29,15 +29,15 @@
  * POSSIBILITY OF SUCH DAMAGE.
  */
 
-#ifndef __HIRAMDIS_H
-#define __HIRAMDIS_H
+#ifndef __HIREDIS_H
+#define __HIREDIS_H
 #include <stdio.h> /* for size_t */
 #include <stdarg.h> /* for va_list */
 #include <sys/time.h> /* for struct timeval */
 
-#define HIRAMDIS_MAJOR 0
-#define HIRAMDIS_MINOR 0
-#define HIRAMDIS_PATCH 0
+#define HIREDIS_MAJOR 0
+#define HIREDIS_MINOR 11
+#define HIREDIS_PATCH 0
 
 #define REDIS_ERR -1
 #define REDIS_OK 0
@@ -164,10 +164,12 @@ int redisFormatCommandArgv(char **target, int argc, const char **argv, const siz
 
 /* Context for a connection to Redis */
 typedef struct redisContext {
+    void* client; /* RamCloud client */
     int err; /* Error flags, 0 when there is no error */
     char errstr[128]; /* String representation of error when applicable */
-    void* client; /* RamCloud client */
     int flags;
+    char *obuf; /* Write buffer */
+    redisReader *reader; /* Protocol reader */
 } redisContext;
 
 redisContext *redisConnect(const char *ip, int port);

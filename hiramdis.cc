@@ -174,12 +174,12 @@ int redisvFormatCommand(char **target, const char *format, va_list ap) {
  * len = redisFormatCommand(target, "SET %s %b", mykey, myval, myvallen);
  */
 int redisFormatCommand(char **target, const char *format, ...) {
-    va_list ap;
-    int len;
-    va_start(ap,format);
-    len = redisvFormatCommand(target,format,ap);
-    va_end(ap);
-    return len;
+  va_list ap;
+  int len;
+  va_start(ap,format);
+  len = redisvFormatCommand(target,format,ap);
+  va_end(ap);
+  return len;
 }
 
 /* Format a command according to the Redis protocol. This function takes the
@@ -201,13 +201,18 @@ static redisContext *redisContextInit(void) {
   if (c == NULL)
     return NULL;
 
+  c->client = NULL;
   c->err = 0;
   c->errstr[0] = '\0';
+  c->obuf = NULL;
+  c->reader = NULL;
   return c;
 }
 
 void redisFree(redisContext *c) {
-  delete (RAMCloud::RamCloud*)c->client;
+  if (c->client != NULL)
+    delete (RAMCloud::RamCloud*)c->client;
+
   delete c;
 }
 
@@ -223,7 +228,7 @@ redisContext *redisConnect(const char *ip, int port) {
 
   c = redisContextInit();
   if (c == NULL)
-      return NULL;
+    return NULL;
 
   c->flags |= REDIS_BLOCK;
 
@@ -241,7 +246,21 @@ redisContext *redisConnectWithTimeout(const char *ip, int port, const struct tim
 }
 
 redisContext *redisConnectNonBlock(const char *ip, int port) {
+  redisContext *c;
+
+  c = redisContextInit();
+  if (c == NULL)
     return NULL;
+
+  c->flags &= ~REDIS_BLOCK;
+
+  // Make RAMCloud coordinator locator string from the given ip and port.
+  std::stringstream ss;
+  ss << "basic+udp:host=" << ip << ",port=" << port;
+
+  c->client = (void*) new RAMCloud::RamCloud(ss.str().c_str());
+
+  return c;
 }
 
 redisContext *redisConnectBindNonBlock(const char *ip, int port,
