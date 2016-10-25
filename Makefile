@@ -1,7 +1,7 @@
 CC := g++
 
 # Convenience variables for making Ramdis (hiredis-based) library
-LIBRAMDIS_NAME := libhiramdis
+LIBRAMDIS_NAME := libhiredis
 LIBRAMDIS_MAJOR := 0
 LIBRAMDIS_MINOR := 0
 LIBRAMDIS_SONAME := $(LIBRAMDIS_NAME).so.$(LIBRAMDIS_MAJOR).$(LIBRAMDIS_MINOR)
