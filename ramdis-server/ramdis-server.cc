@@ -171,6 +171,7 @@ void processInputBuffer(std::vector<char> &cBuf,
 void serverLog(int level, const char *fmt, ...) {
   va_list ap;
   char msg[LOG_MAX_LEN];
+  char pmsg[LOG_MAX_LEN];
 
   if ((level&0xff) > VERBOSITY) return;
 
@@ -178,7 +179,30 @@ void serverLog(int level, const char *fmt, ...) {
   vsnprintf(msg, sizeof(msg), fmt, ap);
   va_end(ap);
 
-  printf(msg);
+  switch(level) {
+    case LL_FATAL:
+      snprintf(pmsg, sizeof(pmsg), "FATAL: %s\n", msg);
+      break;
+    case LL_ERROR:
+      snprintf(pmsg, sizeof(pmsg), "ERROR: %s\n", msg);
+      break;
+    case LL_WARN:
+      snprintf(pmsg, sizeof(pmsg), "WARN: %s\n", msg);
+      break;
+    case LL_INFO:
+      snprintf(pmsg, sizeof(pmsg), "INFO: %s\n", msg);
+      break;
+    case LL_DEBUG:
+      snprintf(pmsg, sizeof(pmsg), "DEBUG: %s\n", msg);
+      break;
+    case LL_TRACE:
+      snprintf(pmsg, sizeof(pmsg), "TRACE: %s\n", msg);
+      break;
+    default:
+      break;
+  }
+
+  printf(pmsg);
 }
 
 static const char USAGE[] =
@@ -223,7 +247,7 @@ int main(int argc, char *argv[]) {
       &servinfo);
 
   if (rv != 0) {
-    printf("ERROR: %s", gai_strerror(rv));
+    serverLog(LL_ERROR, "%s", gai_strerror(rv));
     return -1;
   }
 
@@ -235,27 +259,27 @@ int main(int argc, char *argv[]) {
 
     int yes = 1;
     if (setsockopt(sfd, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(yes)) == -1) {
-      printf("ERROR: setsockopt SO_REUSEADDR: %s\n", strerror(errno));
+      serverLog(LL_ERROR, "setsockopt SO_REUSEADDR: %s", strerror(errno));
       close(sfd);
       freeaddrinfo(servinfo);
       return -1;
     }
 
     if (bind(sfd, p->ai_addr, p->ai_addrlen) == -1) {
-      printf("ERROR: bind: %s\n", strerror(errno));
+      serverLog(LL_ERROR, "bind: %s", strerror(errno));
       close(sfd);
       freeaddrinfo(servinfo);
       return -1;
     }
 
     if (listen(sfd, CONFIG_DEFAULT_TCP_BACKLOG) == -1) {
-      printf("ERROR: listen: %s\n", strerror(errno));
+      serverLog(LL_ERROR, "listen: %s", strerror(errno));
       close(sfd);
       freeaddrinfo(servinfo);
       return -1;
     }
 
-    serverLog(LL_INFO, "Listening on %s:%s\n", 
+    serverLog(LL_INFO, "Listening on %s:%s", 
         args["--host"].asString().c_str(), 
         args["--port"].asString().c_str());
 
@@ -263,7 +287,7 @@ int main(int argc, char *argv[]) {
   }
 
   if (p == NULL) {
-    printf("ERROR: unable to bind socket, errno: %d\n", errno);
+    serverLog(LL_ERROR, "Unable to bind socket: %s", strerror(errno));
     freeaddrinfo(servinfo);
     return -1;
   }
@@ -275,7 +299,7 @@ int main(int argc, char *argv[]) {
 
   int flags;
   if ((flags = fcntl(sfd, F_GETFL)) == -1) {
-    printf("ERROR: fcntl(F_GETFL): %s\n", strerror(errno));
+    serverLog(LL_ERROR, "fcntl(F_GETFL): %s", strerror(errno));
     close(sfd);
     return -1;
   }
@@ -283,7 +307,7 @@ int main(int argc, char *argv[]) {
   flags |= O_NONBLOCK;
 
   if (fcntl(sfd, F_SETFL, flags) == -1) {
-    printf("ERROR: fcntl(F_SETFL,O_NONBLOCK): %s\n", strerror(errno));
+    serverLog(LL_ERROR, "fcntl(F_SETFL,O_NONBLOCK): %s", strerror(errno));
     close(sfd);
     return -1;
   }
@@ -318,7 +342,7 @@ int main(int argc, char *argv[]) {
     
     if (cfd == -1) {
       if (errno != EAGAIN && errno != EWOULDBLOCK) {
-        printf("ERROR: accept: %s\n", strerror(errno));
+        serverLog(LL_ERROR, "accept: %s", strerror(errno));
         for (auto const& entry : clientBuffers) { 
           close(entry.first);
         }
@@ -331,7 +355,7 @@ int main(int argc, char *argv[]) {
       char ip[NET_IP_STR_LEN];
       inet_ntop(AF_INET, (void*)&(s->sin_addr), ip, sizeof(ip));
      
-      serverLog(LL_INFO, "Received client connection: %s:%d\n", ip, port);
+      serverLog(LL_INFO, "Received client connection: %s:%d", ip, port);
 
       clientBuffers[cfd] = {};
       FD_SET(cfd, &cfds);
@@ -345,7 +369,7 @@ int main(int argc, char *argv[]) {
     int retval = select(FD_SETSIZE, &_cfds, NULL, NULL, &tv);
 
     if (retval < 0) {
-      printf("ERROR: select: %s\n", strerror(errno));
+      serverLog(LL_ERROR, "select: %s", strerror(errno));
       for (auto const& entry : clientBuffers) { 
         close(entry.first);
       }
@@ -363,7 +387,7 @@ int main(int argc, char *argv[]) {
           int nbytes = read(cfd, buf, PROTO_IOBUF_LEN);
           if (nbytes == -1) {
             if (errno != EAGAIN) {
-              serverLog(LL_ERROR, "read: %s\n", strerror(errno));
+              serverLog(LL_ERROR, "read: %s", strerror(errno));
               // TODO: clean up properly...
               close(sfd);
               return -1;
