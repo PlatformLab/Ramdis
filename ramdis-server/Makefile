@@ -18,7 +18,7 @@ TARGETS := ramdis-server
 
 all: $(TARGETS)
 
-$(TARGETS): $(DOCOPT_DIR)/docopt.o $(TARGETS:=.o)
+$(TARGETS): $(DOCOPT_DIR)/docopt.o $(TARGETS:=.o) sds.o zmalloc.o
 	$(CC) -o $@ $^ $(LDFLAGS) 
 
 %.o: %.cc %.h
@@ -31,6 +31,12 @@ $(TARGETS): $(DOCOPT_DIR)/docopt.o $(TARGETS:=.o)
 	$(CC) -std=c++11 -c $< $(CFLAGS) -g -o $@
 
 %.o: %.cpp
+	$(CC) -std=c++11 -c $< $(CFLAGS) -g -o $@
+
+%.o: %.c %.h
+	$(CC) -std=c++11 -c $< $(CFLAGS) -g -o $@
+
+%.o: %.c
 	$(CC) -std=c++11 -c $< $(CFLAGS) -g -o $@
 
 clean:
