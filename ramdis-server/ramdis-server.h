@@ -27,12 +27,12 @@
 
 /* Used to store client data coming in over the socket and parsing state as the
  * buffer is incrementally parsed for commands. */
-typedef struct clientBuffer {
+struct clientBuffer {
   sds querybuf;                    // Buffer for data coming in over the wire.
   int reqtype;
   int multibulklen;
   long bulklen;
   std::vector<std::string> argv;   // Resulting command arguments.
-} clientBuffer;
+};
 
 #endif // __RAMDIS_SERVER_H
