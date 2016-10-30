@@ -12,8 +12,117 @@
 #include "RamCloud.h"
 #include "docopt.h"
 
-int processInlineBuffer(std::vector<char> &cBuf, 
-    std::vector<std::string> &argv) {
+// Queue elements are (file descriptor, request arguements) 
+std::queue<std::pair<int, std::vector<std::string>>> requestQ;
+std::mutex requestQMutex;
+// Queue elements are (file descriptor, response string)
+std::queue<std::pair<int, std::string>> responseQ;
+std::mutex responseQMutex;
+
+void serverLog(int level, const char *fmt, ...) {
+  va_list ap;
+  char msg[LOG_MAX_LEN];
+  char pmsg[LOG_MAX_LEN];
+
+  if ((level&0xff) > VERBOSITY) return;
+
+  va_start(ap, fmt);
+  vsnprintf(msg, sizeof(msg), fmt, ap);
+  va_end(ap);
+
+  switch(level) {
+    case LL_FATAL:
+      snprintf(pmsg, sizeof(pmsg), "FATAL: %s\n", msg);
+      break;
+    case LL_ERROR:
+      snprintf(pmsg, sizeof(pmsg), "ERROR: %s\n", msg);
+      break;
+    case LL_WARN:
+      snprintf(pmsg, sizeof(pmsg), "WARN: %s\n", msg);
+      break;
+    case LL_INFO:
+      snprintf(pmsg, sizeof(pmsg), "INFO: %s\n", msg);
+      break;
+    case LL_DEBUG:
+      snprintf(pmsg, sizeof(pmsg), "DEBUG: %s\n", msg);
+      break;
+    case LL_TRACE:
+      snprintf(pmsg, sizeof(pmsg), "TRACE: %s\n", msg);
+      break;
+    default:
+      break;
+  }
+
+  printf(pmsg);
+}
+
+/* Convert a string into a long long. Returns 1 if the string could be parsed
+ * into a (non-overflowing) long long, 0 otherwise. The value will be set to
+ * the parsed value when appropriate. */
+int string2ll(const char *s, size_t slen, long long *value) {
+    const char *p = s;
+    size_t plen = 0;
+    int negative = 0;
+    unsigned long long v;
+
+    if (plen == slen)
+        return 0;
+
+    /* Special case: first and only digit is 0. */
+    if (slen == 1 && p[0] == '0') {
+        if (value != NULL) *value = 0;
+        return 1;
+    }
+
+    if (p[0] == '-') {
+        negative = 1;
+        p++; plen++;
+
+        /* Abort on only a negative sign. */
+        if (plen == slen)
+            return 0;
+    }
+
+    /* First digit should be 1-9, otherwise the string should just be 0. */
+    if (p[0] >= '1' && p[0] <= '9') {
+        v = p[0]-'0';
+        p++; plen++;
+    } else if (p[0] == '0' && slen == 1) {
+        *value = 0;
+        return 1;
+    } else {
+        return 0;
+    }
+
+    while (plen < slen && p[0] >= '0' && p[0] <= '9') {
+        if (v > (ULLONG_MAX / 10)) /* Overflow. */
+            return 0;
+        v *= 10;
+
+        if (v > (ULLONG_MAX - (p[0]-'0'))) /* Overflow. */
+            return 0;
+        v += p[0]-'0';
+
+        p++; plen++;
+    }
+
+    /* Return if not all bytes were used. */
+    if (plen < slen)
+        return 0;
+
+    if (negative) {
+        if (v > ((unsigned long long)(-(LLONG_MIN+1))+1)) /* Overflow. */
+            return 0;
+        if (value != NULL) *value = -v;
+    } else {
+        if (v > LLONG_MAX) /* Overflow. */
+            return 0;
+        if (value != NULL) *value = v;
+    }
+    return 1;
+}
+
+int processInlineBuffer(clientBuffer *c) {
 //
 //    char *newline;
 //    int argc, j;
@@ -75,134 +184,136 @@ int processInlineBuffer(std::vector<char> &cBuf,
 }
 
 /* Return the number of requests parsed from the buffer. */
-int processMultibulkBuffer(std::vector<char> &cBuf, 
-    std::vector<std::string> &argv) {
-
+int processMultibulkBuffer(clientBuffer *c) {
     char *newline = NULL;
     int pos = 0, ok;
     long long ll;
-    long long multibulklen;
-    long long bulklen;
 
-    char *reqBuf = cBuf.data();
+    if (c->multibulklen == 0) {
+        /* Multi bulk length cannot be read without a \r\n */
+        newline = strchr(c->querybuf,'\r');
+        if (newline == NULL) {
+            if (sdslen(c->querybuf) > PROTO_INLINE_MAX_SIZE) {
+                serverLog(LL_ERROR, 
+                    "Protocol error: too big mbulk count string");
+                exit(1);
+            }
+            return C_ERR;
+        }
 
-    /* Multi bulk length cannot be read without a \r\n */
-    newline = strchr(reqBuf, '\r');
-    if (newline == NULL) {
-      return 0;
+        /* Buffer should also contain \n */
+        if (newline-(c->querybuf) > ((signed)sdslen(c->querybuf)-2))
+            return C_ERR;
+
+        /* We know for sure there is a whole line since newline != NULL,
+         * so go ahead and find out the multi bulk length. */
+        ok = string2ll(c->querybuf+1,newline-(c->querybuf+1),&ll);
+        if (!ok || ll > 1024*1024) {
+            serverLog(LL_ERROR, 
+                    "Protocol error: invalid multibulk length");
+            exit(1);
+        }
+
+        pos = (newline-c->querybuf)+2;
+        if (ll <= 0) {
+            sdsrange(c->querybuf,pos,-1);
+            return C_OK;
+        }
+
+        c->multibulklen = ll;
+
+        /* Setup argv array on client structure */
+        if (c->argv.size() > 0) {
+            c->argv.clear();
+            c->argv.reserve(ll);
+        }
     }
 
-    /* Buffer should also contain \n */
-    if (newline - reqBuf > cBuf.size() - 2) 
-      return 0;
+    while(c->multibulklen) {
+        /* Read bulk length if unknown */
+        if (c->bulklen == -1) {
+            newline = strchr(c->querybuf+pos,'\r');
+            if (newline == NULL) {
+                if (sdslen(c->querybuf) > PROTO_INLINE_MAX_SIZE) {
+                    serverLog(LL_ERROR, 
+                        "Protocol error: too big bulk count string");
+                    exit(1);
+                }
+                break;
+            }
 
-    /* We know for sure there is a whole line since newline != NULL,
-     * so go ahead and find out the multi bulk length. */
-    int lenLen = newline - (reqBuf + 1);
-    char len[lenLen + 1];
-    memcpy(len, reqBuf + 1, lenLen);
-    len[lenLen] = '\0';
-    ll = atoll(len);
+            /* Buffer should also contain \n */
+            if (newline-(c->querybuf) > ((signed)sdslen(c->querybuf)-2))
+                break;
 
-    pos = (newline - reqBuf) + 2;
-    if (ll <= 0) {
-      cBuf.erase(cBuf.begin(), cBuf.begin() + pos);
-      return 1;
-    }
+            if (c->querybuf[pos] != '$') {
+                serverLog(LL_ERROR, 
+                    "Protocol error: expected '$', got '%c'",
+                    c->querybuf[pos]);
+                exit(1);
+            }
 
-    multibulklen = ll;
+            ok = string2ll(c->querybuf+pos+1,newline-(c->querybuf+pos+1),&ll);
+            if (!ok || ll < 0 || ll > 512*1024*1024) {
+                serverLog(LL_ERROR, 
+                    "Protocol error: invalid bulk length");
+                exit(1);
+            }
 
-    while(multibulklen) {
-      newline = strchr(reqBuf + pos, '\r');
-      if (newline == NULL) {
-        return 0;
-      }
+            pos += newline-(c->querybuf+pos)+2;
+            c->bulklen = ll;
+        }
 
-      /* Buffer should also contain \n */
-      if (newline - reqBuf > cBuf.size() - 2) {
-        return 0;
-      }
+        /* Read bulk argument */
+        if (sdslen(c->querybuf)-pos < (unsigned)(c->bulklen+2)) {
+            /* Not enough data (+2 == trailing \r\n) */
+            break;
+        } else {
+            c->argv.emplace_back(c->querybuf + pos, c->bulklen);
+            pos += c->bulklen+2;
 
-      lenLen = newline - (reqBuf + pos + 1);
-      char len[lenLen + 1];
-      memcpy(len, reqBuf + pos + 1, lenLen);
-      len[lenLen] = '\0';
-      ll = atoll(len);
-
-      pos += newline - (reqBuf + pos) + 2;
-
-      bulklen = ll;
-
-      /* Read bulk argument */
-      if (cBuf.size() - pos < bulklen + 2) {
-        /* Not enough data (+2 == trailing \r\n) */
-        return 0;
-      }
-
-      argv.emplace_back(reqBuf + pos, bulklen);
-      pos += bulklen + 2;
-
-      multibulklen--;
+            c->bulklen = -1;
+            c->multibulklen--;
+        }
     }
 
     /* Trim to pos */
-    if (pos) {
-      cBuf.erase(cBuf.begin(), cBuf.begin() + pos);
-      return 1;
-    } else {
-      return 0;
+    if (pos) sdsrange(c->querybuf,pos,-1);
+
+    /* We're done when c->multibulk == 0 */
+    if (c->multibulklen == 0) {
+        /* Queue the command in the request queue. */
+        std::lock_guard<std::mutex> lock(requestQMutex);
+        requestQ.emplace(c->fd, c->argv);
+        c->argv.clear();
+        return C_OK;
     }
+
+    /* Still not ready to process the command */
+    return C_ERR;
 }
 
-
-void processInputBuffer(std::vector<char> &cBuf, 
-    std::vector<std::string> &argv) {
+void processInputBuffer(clientBuffer *c) {
   /* Keep processing while there is something in the input buffer */
-  while(cBuf.size()) {
-    if (cBuf[0] == '*') {
-      if (processMultibulkBuffer(cBuf, argv) == 0) break;
+  while(sdslen(c->querybuf)) {
+    /* Determine request type when unknown. */
+    if (!c->reqtype) {
+      if (c->querybuf[0] == '*') {
+        c->reqtype = PROTO_REQ_MULTIBULK;
+      } else {
+        c->reqtype = PROTO_REQ_INLINE;
+      }
+    }
+
+    if (c->reqtype == PROTO_REQ_INLINE) {
+      if (processInlineBuffer(c) != C_OK) break;
+    } else if (c->reqtype == PROTO_REQ_MULTIBULK) {
+      if (processMultibulkBuffer(c) != C_OK) break;
     } else {
-      // not implemented for now.
-      if (processInlineBuffer(cBuf, argv) == 0) break;
+      serverLog(LL_ERROR, "Unknown request type");
+      exit(1);
     }
   }
-}
-
-void serverLog(int level, const char *fmt, ...) {
-  va_list ap;
-  char msg[LOG_MAX_LEN];
-  char pmsg[LOG_MAX_LEN];
-
-  if ((level&0xff) > VERBOSITY) return;
-
-  va_start(ap, fmt);
-  vsnprintf(msg, sizeof(msg), fmt, ap);
-  va_end(ap);
-
-  switch(level) {
-    case LL_FATAL:
-      snprintf(pmsg, sizeof(pmsg), "FATAL: %s\n", msg);
-      break;
-    case LL_ERROR:
-      snprintf(pmsg, sizeof(pmsg), "ERROR: %s\n", msg);
-      break;
-    case LL_WARN:
-      snprintf(pmsg, sizeof(pmsg), "WARN: %s\n", msg);
-      break;
-    case LL_INFO:
-      snprintf(pmsg, sizeof(pmsg), "INFO: %s\n", msg);
-      break;
-    case LL_DEBUG:
-      snprintf(pmsg, sizeof(pmsg), "DEBUG: %s\n", msg);
-      break;
-    case LL_TRACE:
-      snprintf(pmsg, sizeof(pmsg), "TRACE: %s\n", msg);
-      break;
-    default:
-      break;
-  }
-
-  printf(pmsg);
 }
 
 static const char USAGE[] =
@@ -322,13 +433,7 @@ int main(int argc, char *argv[]) {
    */
 
   // Client file descriptor -> buffer of data read from socket
-  std::map<int, std::vector<char>> clientBuffers;
-  // Queue elements are (file descriptor, request arguements) 
-  std::queue<std::pair<int, std::vector<std::string>>> requestQ;
-  std::mutex requestQMutex;
-  // Queue elements are (file descriptor, response string)
-  std::queue<std::pair<int, std::string>> responseQ;
-  std::mutex responseQMutex;
+  std::map<int, clientBuffer> clientBuffers;
 
   fd_set cfds, _cfds;
   FD_ZERO(&cfds);
@@ -357,7 +462,7 @@ int main(int argc, char *argv[]) {
      
       serverLog(LL_INFO, "Received client connection: %s:%d", ip, port);
 
-      clientBuffers[cfd] = {};
+      clientBuffers.emplace(cfd, cfd);
       FD_SET(cfd, &cfds);
     }
 
@@ -381,11 +486,13 @@ int main(int argc, char *argv[]) {
     if (retval > 0) {
       for (auto it = clientBuffers.begin(); it != clientBuffers.end(); ) {
         int cfd = it->first;
-        std::vector<char> *cBuf = &it->second;
+        clientBuffer *cBuf = &it->second;
         if (FD_ISSET(cfd, &_cfds)) {
-          char buf[PROTO_IOBUF_LEN];
-          int nbytes = read(cfd, buf, PROTO_IOBUF_LEN);
+          size_t qblen = sdslen(cBuf->querybuf);
+          cBuf->querybuf = sdsMakeRoomFor(cBuf->querybuf, PROTO_IOBUF_LEN);
+          int nbytes = read(cfd, cBuf->querybuf + qblen, PROTO_IOBUF_LEN);
           if (nbytes == -1) {
+            // TODO: clean this up
             if (errno != EAGAIN) {
               serverLog(LL_ERROR, "read: %s", strerror(errno));
               // TODO: clean up properly...
@@ -397,21 +504,14 @@ int main(int argc, char *argv[]) {
             FD_CLR(cfd, &cfds);
             continue;
           }
-
-          cBuf->insert(cBuf->end(), buf, buf + nbytes);
-          buf[nbytes] = '\0';
-          printf("Got %d:%s\n", cfd, buf);
-
-          // Check client buffer for fully buffered request(s).
-          // Want to model code from Redis...
+          
+          sdsIncrLen(cBuf->querybuf, nbytes);
+          processInputBuffer(cBuf);
         }
 
         ++it;
       }
     } 
-
-
-    
   }
 
   return 0;

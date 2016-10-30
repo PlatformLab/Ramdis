@@ -25,14 +25,37 @@
 #define VERBOSITY LL_INFO
 #endif
 
+/* Client request types */
+#define PROTO_REQ_INLINE 1
+#define PROTO_REQ_MULTIBULK 2
+
+/* Protocol and I/O related defines */
+#define PROTO_INLINE_MAX_SIZE   (1024*64) /* Max size of inline reads */
+#define PROTO_MBULK_BIG_ARG     (1024*32)
+
+/* Error codes */
+#define C_OK                    0
+#define C_ERR                   -1
+
+#define serverPanic(_e) _serverPanic(#_e,__FILE__,__LINE__),_exit(1)
+
 /* Used to store client data coming in over the socket and parsing state as the
  * buffer is incrementally parsed for commands. */
 struct clientBuffer {
-  sds querybuf;                    // Buffer for data coming in over the wire.
+  clientBuffer(int fd) : 
+    fd(fd),
+    querybuf(sdsempty()),
+    argv(),
+    reqtype(0),
+    multibulklen(0),
+    bulklen(-1) {}
+  // TODO: write destructor
+  int fd;
+  sds querybuf;           /* Buffer we use to accumulate client queries. */
+  std::vector<std::string> argv; /* Arguments of current command. */
   int reqtype;
   int multibulklen;
   long bulklen;
-  std::vector<std::string> argv;   // Resulting command arguments.
 };
 
 #endif // __RAMDIS_SERVER_H
