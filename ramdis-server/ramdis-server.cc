@@ -377,14 +377,14 @@ int main(int argc, char *argv[]) {
     }
 
     if (bind(sfd, p->ai_addr, p->ai_addrlen) == -1) {
-      serverLog(LL_ERROR, "bind: %s", strerror(errno));
+      serverLog(LL_ERROR, "Bind error: %s", strerror(errno));
       close(sfd);
       freeaddrinfo(servinfo);
       return -1;
     }
 
     if (listen(sfd, CONFIG_DEFAULT_TCP_BACKLOG) == -1) {
-      serverLog(LL_ERROR, "listen: %s", strerror(errno));
+      serverLog(LL_ERROR, "Listen error: %s", strerror(errno));
       close(sfd);
       freeaddrinfo(servinfo);
       return -1;
@@ -447,7 +447,7 @@ int main(int argc, char *argv[]) {
     
     if (cfd == -1) {
       if (errno != EAGAIN && errno != EWOULDBLOCK) {
-        serverLog(LL_ERROR, "accept: %s", strerror(errno));
+        serverLog(LL_ERROR, "Accept error: %s", strerror(errno));
         for (auto const& entry : clientBuffers) { 
           close(entry.first);
         }
@@ -474,7 +474,7 @@ int main(int argc, char *argv[]) {
     int retval = select(FD_SETSIZE, &_cfds, NULL, NULL, &tv);
 
     if (retval < 0) {
-      serverLog(LL_ERROR, "select: %s", strerror(errno));
+      serverLog(LL_ERROR, "Select error: %s", strerror(errno));
       for (auto const& entry : clientBuffers) { 
         close(entry.first);
       }
