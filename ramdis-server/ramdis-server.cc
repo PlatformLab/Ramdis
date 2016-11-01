@@ -492,24 +492,36 @@ int main(int argc, char *argv[]) {
           cBuf->querybuf = sdsMakeRoomFor(cBuf->querybuf, PROTO_IOBUF_LEN);
           int nbytes = read(cfd, cBuf->querybuf + qblen, PROTO_IOBUF_LEN);
           if (nbytes == -1) {
-            // TODO: clean this up
-            if (errno != EAGAIN) {
-              serverLog(LL_ERROR, "read: %s", strerror(errno));
-              // TODO: clean up properly...
-              close(sfd);
-              return -1;
+            if (errno == EAGAIN) {
+              /* That's fine, try again later. */
+              ++it;
+              continue;
+            } else {
+              /* Got an error. Close the client. */
+              serverLog(LL_ERROR, "Read error: %s. Closing client.", 
+                  strerror(errno));
+              it = clientBuffers.erase(it);
+              close(cfd);
+              FD_CLR(cfd, &cfds);
+              continue;
             }
           } else if (nbytes == 0) {
+            /* Client closed connection. */
             it = clientBuffers.erase(it);
             FD_CLR(cfd, &cfds);
             continue;
-          }
-          
-          sdsIncrLen(cBuf->querybuf, nbytes);
-          processInputBuffer(cBuf);
+          } else {
+            /* Houston, we have data! */
+            sdsIncrLen(cBuf->querybuf, nbytes);
+            processInputBuffer(cBuf);
+            ++it;
+            continue;
+          }  
+        } else {
+          /* This client has no data. */
+          ++it;
+          continue;
         }
-
-        ++it;
       }
     } 
   }
