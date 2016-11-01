@@ -183,7 +183,9 @@ int processInlineBuffer(clientBuffer *c) {
   return 0; // not implemented for now.
 }
 
-/* Return the number of requests parsed from the buffer. */
+/* Parse client buffers for request arguments. Partial results are stored in
+ * c->agv. When a full request is parsed from the buffer, then it is enqueued
+ * in the request queue for later execution. */
 int processMultibulkBuffer(clientBuffer *c) {
     char *newline = NULL;
     int pos = 0, ok;
