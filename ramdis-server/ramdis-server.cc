@@ -526,6 +526,44 @@ int main(int argc, char *argv[]) {
         }
       }
     } 
+
+    while (responseQ.size() > 0) {
+      int cfd;
+      std::string response;
+      {
+        std::lock_guard<std::mutex> lock(responseQMutex);
+        std::pair<int, std::string> entry = responseQ.front();
+        cfd = entry.first;
+        response = entry.second;
+        responseQ.pop();
+      }
+     
+      if (clientBuffers.find(cfd) != clientBuffers.end()) { 
+        int bufpos = 0;
+        const char* buf = response.c_str();
+        int buflen = response.length();
+        while (bufpos != buflen) {
+          int nwritten = write(cfd, buf + bufpos, buflen - bufpos);
+          if (nwritten == -1) {
+            if (errno == EAGAIN) {
+              /* Try again. */
+              continue;
+            } else {
+              /* Something bad happened. */
+              clientBuffers.erase(cfd);
+              close(cfd);
+              FD_CLR(cfd, &cfds);
+              break;
+            }
+          }
+          bufpos += nwritten;
+        }
+      } else {
+        /* Response is for a client that we already closed the connection for.
+         * */
+        continue;
+      }
+    }
   }
 
   return 0;
