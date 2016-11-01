@@ -5,7 +5,7 @@
 #include <fcntl.h>
 #include <stdarg.h>
 #include <arpa/inet.h>
-
+#include <thread>
 #include <queue>
 
 #include "ramdis-server.h"
@@ -318,6 +318,31 @@ void processInputBuffer(clientBuffer *c) {
   }
 }
 
+void requestExecutor() {
+  int cfd;
+  std::vector<std::string> argv;
+  while (true) {
+    if (requestQ.size() == 0)
+      continue;
+
+    std::lock_guard<std::mutex> lock(requestQMutex);
+    if (requestQ.size() > 0) {
+      std::pair<int, std::vector<std::string>> entry = requestQ.front();
+      cfd = entry.first;
+      argv = entry.second;
+      requestQ.pop();
+      break;
+    }
+  }
+
+  /* Do processing here. */
+
+  {
+    std::lock_guard<std::mutex> lock(responseQMutex);
+    responseQ.emplace(cfd, "$5\r\ndone!\r\n");
+  }
+}
+
 static const char USAGE[] =
 R"(Ramdis Server.
 
@@ -332,7 +357,6 @@ R"(Ramdis Server.
       --port=PORT  Port number to use [default: 6379]
 
 )";
-
 
 int main(int argc, char *argv[]) {
 
