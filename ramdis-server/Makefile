@@ -1,5 +1,9 @@
 CC := g++
 
+# Change this to change the default verbosity level
+# Defaults to LL_INFO
+VERBOSITY ?= 3 # LL_INFO
+
 # Includes and library dependencies of RAMCloud
 RAMCLOUD_SRC := $(HOME)/RAMCloud/src
 RAMCLOUD_LIB := $(HOME)/RAMCloud/obj.master
@@ -11,7 +15,7 @@ DOCOPT_DIR := ../docopt.cpp
 DOCOPT_INCLUDES := -I$(DOCOPT_DIR)
 DOCOPT_LIBDEPS := -L$(DOCOPT_DIR)
 
-CFLAGS := $(DOCOPT_INCLUDES) $(RC_CLIENT_INCLUDES)
+CFLAGS := $(DOCOPT_INCLUDES) $(RC_CLIENT_INCLUDES) -DVERBOSITY=$(VERBOSITY)
 LDFLAGS := $(DOCOPT_LIBDEPS) $(RC_CLIENT_LIBDEPS)
 
 TARGETS := ramdis-server

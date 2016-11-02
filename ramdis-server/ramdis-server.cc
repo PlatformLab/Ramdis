@@ -318,28 +318,31 @@ void processInputBuffer(clientBuffer *c) {
   }
 }
 
-void requestExecutor() {
-  int cfd;
-  std::vector<std::string> argv;
+void requestExecutor(int threadNumber) {
+  serverLog(LL_DEBUG, "Thread %d started.", threadNumber);
   while (true) {
-    if (requestQ.size() == 0)
-      continue;
+    int cfd;
+    std::vector<std::string> argv;
+    while (true) {
+      if (requestQ.size() == 0)
+        continue;
 
-    std::lock_guard<std::mutex> lock(requestQMutex);
-    if (requestQ.size() > 0) {
-      std::pair<int, std::vector<std::string>> entry = requestQ.front();
-      cfd = entry.first;
-      argv = entry.second;
-      requestQ.pop();
-      break;
+      std::lock_guard<std::mutex> lock(requestQMutex);
+      if (requestQ.size() > 0) {
+        std::pair<int, std::vector<std::string>> entry = requestQ.front();
+        cfd = entry.first;
+        argv = entry.second;
+        requestQ.pop();
+        break;
+      }
     }
-  }
 
-  /* Do processing here. */
+    /* Do processing here. */
 
-  {
-    std::lock_guard<std::mutex> lock(responseQMutex);
-    responseQ.emplace(cfd, "$5\r\ndone!\r\n");
+    {
+      std::lock_guard<std::mutex> lock(responseQMutex);
+      responseQ.emplace(cfd, "$5\r\ndone!\r\n");
+    }
   }
 }
 
@@ -355,6 +358,8 @@ R"(Ramdis Server.
     Options:
       --host=HOST  Host IPv4 address to use [default: 127.0.0.1] 
       --port=PORT  Port number to use [default: 6379]
+      --threads=N  Number of request executor threads to run in parallel
+      [default: 4]
 
 )";
 
@@ -370,6 +375,8 @@ int main(int argc, char *argv[]) {
   for (auto const& arg : args) {
     std::cout << arg.first << ": " << arg.second << std::endl;
   }
+
+  serverLog(LL_INFO, "Server verbosity set to %d", VERBOSITY);
 
   /* Open a listening socket for the server. */
 
@@ -447,6 +454,12 @@ int main(int argc, char *argv[]) {
     serverLog(LL_ERROR, "fcntl(F_SETFL,O_NONBLOCK): %s", strerror(errno));
     close(sfd);
     return -1;
+  }
+
+  /* Start request executor threads. */
+  std::vector<std::thread> threads;
+  for (int i = 0; i < (int)args["--threads"].asLong(); i++) {
+    threads.emplace_back(requestExecutor, i + 1);
   }
 
   /* In a loop:
