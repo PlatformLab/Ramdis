@@ -58,7 +58,7 @@ struct clientBuffer {
   long bulklen;
 };
 
-typedef std::string redisCommandProc(clientBuffer *c);
+typedef std::string redisCommandProc(std::vector<std::string> *argv);
 typedef int *redisGetKeysProc(struct redisCommand *cmd, std::vector<std::string> *argv, int *numkeys);
 struct redisCommand {
     const char *name;

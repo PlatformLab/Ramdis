@@ -19,7 +19,7 @@ std::mutex requestQMutex;
 std::queue<std::pair<int, std::string>> responseQ;
 std::mutex responseQMutex;
 
-std::string unsupportedCommand(clientBuffer *c) {
+std::string unsupportedCommand(std::vector<std::string> *argv) {
   std::string res("+Unsupported command.\r\n");
   return res;
 }
@@ -570,10 +570,27 @@ void requestExecutor(int threadNumber) {
     }
 
     /* Do processing here. */
+    std::string resp;
+    if (redisCommandTable.find(argv[0].c_str()) == redisCommandTable.end()) {
+      char buf[128];
+      snprintf(buf, sizeof(buf), "+unknown command '%s'\r\n", argv[0].c_str());
+      resp = buf;
+    } else {
+      redisCommand cmd = redisCommandTable[argv[0].c_str()];
+
+      if ((cmd.arity > 0 && cmd.arity != argv.size()) ||
+               (argv.size() < -cmd.arity)) {
+        char buf[128];
+        snprintf(buf, sizeof(buf), "+wrong number of arguments for '%s' command\r\n", argv[0].c_str());
+        resp = buf;
+      } else {
+        resp = cmd.proc(&argv);
+      }
+    }
 
     {
       std::lock_guard<std::mutex> lock(responseQMutex);
-      responseQ.emplace(cfd, "$5\r\ndone!\r\n");
+      responseQ.emplace(cfd, resp.c_str());
     }
   }
 }
