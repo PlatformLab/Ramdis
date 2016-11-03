@@ -19,6 +19,238 @@ std::mutex requestQMutex;
 std::queue<std::pair<int, std::string>> responseQ;
 std::mutex responseQMutex;
 
+std::string unsupportedCommand(clientBuffer *c) {
+  std::string res("+Unsupported command.\r\n");
+  return res;
+}
+
+/* Our command table.
+ *
+ * Every entry is composed of the following fields:
+ *
+ * name: a string representing the command name.
+ * function: pointer to the C function implementing the command.
+ * arity: number of arguments, it is possible to use -N to say >= N
+ * sflags: command flags as string. See below for a table of flags.
+ * flags: flags as bitmask. Computed by Redis using the 'sflags' field.
+ * get_keys_proc: an optional function to get key arguments from a command.
+ *                This is only used when the following three fields are not
+ *                enough to specify what arguments are keys.
+ * first_key_index: first argument that is a key
+ * last_key_index: last argument that is a key
+ * key_step: step to get all the keys from first to last argument. For instance
+ *           in MSET the step is two since arguments are key,val,key,val,...
+ * microseconds: microseconds of total execution time for this command.
+ * calls: total number of calls of this command.
+ *
+ * The flags, microseconds and calls fields are computed by Redis and should
+ * always be set to zero.
+ *
+ * Command flags are expressed using strings where every character represents
+ * a flag. Later the populateCommandTable() function will take care of
+ * populating the real 'flags' field using this characters.
+ *
+ * This is the meaning of the flags:
+ *
+ * w: write command (may modify the key space).
+ * r: read command  (will never modify the key space).
+ * m: may increase memory usage once called. Don't allow if out of memory.
+ * a: admin command, like SAVE or SHUTDOWN.
+ * p: Pub/Sub related command.
+ * f: force replication of this command, regardless of server.dirty.
+ * s: command not allowed in scripts.
+ * R: random command. Command is not deterministic, that is, the same command
+ *    with the same arguments, with the same key space, may have different
+ *    results. For instance SPOP and RANDOMKEY are two random commands.
+ * S: Sort command output array if called from script, so that the output
+ *    is deterministic.
+ * l: Allow command while loading the database.
+ * t: Allow command while a slave has stale data but is not allowed to
+ *    server this data. Normally no command is accepted in this condition
+ *    but just a few.
+ * M: Do not automatically propagate the command on MONITOR.
+ * k: Perform an implicit ASKING for this command, so the command will be
+ *    accepted in cluster mode if the slot is marked as 'importing'.
+ * F: Fast command: O(1) or O(log(N)) command that should never delay
+ *    its execution as long as the kernel scheduler is giving us time.
+ *    Note that commands that may trigger a DEL as a side effect (like SET)
+ *    are not fast commands.
+ */
+std::map<const char*, redisCommand> redisCommandTable = {
+    {"get", {"get",unsupportedCommand,2,"rF",0,NULL,1,1,1,0,0}},
+    {"set", {"set",unsupportedCommand,-3,"wm",0,NULL,1,1,1,0,0}},
+    {"setnx", {"setnx",unsupportedCommand,3,"wmF",0,NULL,1,1,1,0,0}},
+    {"setex", {"setex",unsupportedCommand,4,"wm",0,NULL,1,1,1,0,0}},
+    {"psetex", {"psetex",unsupportedCommand,4,"wm",0,NULL,1,1,1,0,0}},
+    {"append", {"append",unsupportedCommand,3,"wm",0,NULL,1,1,1,0,0}},
+    {"strlen", {"strlen",unsupportedCommand,2,"rF",0,NULL,1,1,1,0,0}},
+    {"del", {"del",unsupportedCommand,-2,"w",0,NULL,1,-1,1,0,0}},
+    {"exists", {"exists",unsupportedCommand,-2,"rF",0,NULL,1,-1,1,0,0}},
+    {"setbit", {"setbit",unsupportedCommand,4,"wm",0,NULL,1,1,1,0,0}},
+    {"getbit", {"getbit",unsupportedCommand,3,"rF",0,NULL,1,1,1,0,0}},
+    {"bitfield", {"bitfield",unsupportedCommand,-2,"wm",0,NULL,1,1,1,0,0}},
+    {"setrange", {"setrange",unsupportedCommand,4,"wm",0,NULL,1,1,1,0,0}},
+    {"getrange", {"getrange",unsupportedCommand,4,"r",0,NULL,1,1,1,0,0}},
+    {"substr", {"substr",unsupportedCommand,4,"r",0,NULL,1,1,1,0,0}},
+    {"incr", {"incr",unsupportedCommand,2,"wmF",0,NULL,1,1,1,0,0}},
+    {"decr", {"decr",unsupportedCommand,2,"wmF",0,NULL,1,1,1,0,0}},
+    {"mget", {"mget",unsupportedCommand,-2,"r",0,NULL,1,-1,1,0,0}},
+    {"rpush", {"rpush",unsupportedCommand,-3,"wmF",0,NULL,1,1,1,0,0}},
+    {"lpush", {"lpush",unsupportedCommand,-3,"wmF",0,NULL,1,1,1,0,0}},
+    {"rpushx", {"rpushx",unsupportedCommand,3,"wmF",0,NULL,1,1,1,0,0}},
+    {"lpushx", {"lpushx",unsupportedCommand,3,"wmF",0,NULL,1,1,1,0,0}},
+    {"linsert", {"linsert",unsupportedCommand,5,"wm",0,NULL,1,1,1,0,0}},
+    {"rpop", {"rpop",unsupportedCommand,2,"wF",0,NULL,1,1,1,0,0}},
+    {"lpop", {"lpop",unsupportedCommand,2,"wF",0,NULL,1,1,1,0,0}},
+    {"brpop", {"brpop",unsupportedCommand,-3,"ws",0,NULL,1,1,1,0,0}},
+    {"brpoplpush", {"brpoplpush",unsupportedCommand,4,"wms",0,NULL,1,2,1,0,0}},
+    {"blpop", {"blpop",unsupportedCommand,-3,"ws",0,NULL,1,-2,1,0,0}},
+    {"llen", {"llen",unsupportedCommand,2,"rF",0,NULL,1,1,1,0,0}},
+    {"lindex", {"lindex",unsupportedCommand,3,"r",0,NULL,1,1,1,0,0}},
+    {"lset", {"lset",unsupportedCommand,4,"wm",0,NULL,1,1,1,0,0}},
+    {"lrange", {"lrange",unsupportedCommand,4,"r",0,NULL,1,1,1,0,0}},
+    {"ltrim", {"ltrim",unsupportedCommand,4,"w",0,NULL,1,1,1,0,0}},
+    {"lrem", {"lrem",unsupportedCommand,4,"w",0,NULL,1,1,1,0,0}},
+    {"rpoplpush", {"rpoplpush",unsupportedCommand,3,"wm",0,NULL,1,2,1,0,0}},
+    {"sadd", {"sadd",unsupportedCommand,-3,"wmF",0,NULL,1,1,1,0,0}},
+    {"srem", {"srem",unsupportedCommand,-3,"wF",0,NULL,1,1,1,0,0}},
+    {"smove", {"smove",unsupportedCommand,4,"wF",0,NULL,1,2,1,0,0}},
+    {"sismember", {"sismember",unsupportedCommand,3,"rF",0,NULL,1,1,1,0,0}},
+    {"scard", {"scard",unsupportedCommand,2,"rF",0,NULL,1,1,1,0,0}},
+    {"spop", {"spop",unsupportedCommand,-2,"wRF",0,NULL,1,1,1,0,0}},
+    {"srandmember", {"srandmember",unsupportedCommand,-2,"rR",0,NULL,1,1,1,0,0}},
+    {"sinter", {"sinter",unsupportedCommand,-2,"rS",0,NULL,1,-1,1,0,0}},
+    {"sinterstore", {"sinterstore",unsupportedCommand,-3,"wm",0,NULL,1,-1,1,0,0}},
+    {"sunion", {"sunion",unsupportedCommand,-2,"rS",0,NULL,1,-1,1,0,0}},
+    {"sunionstore", {"sunionstore",unsupportedCommand,-3,"wm",0,NULL,1,-1,1,0,0}},
+    {"sdiff", {"sdiff",unsupportedCommand,-2,"rS",0,NULL,1,-1,1,0,0}},
+    {"sdiffstore", {"sdiffstore",unsupportedCommand,-3,"wm",0,NULL,1,-1,1,0,0}},
+    {"smembers", {"smembers",unsupportedCommand,2,"rS",0,NULL,1,1,1,0,0}},
+    {"sscan", {"sscan",unsupportedCommand,-3,"rR",0,NULL,1,1,1,0,0}},
+    {"zadd", {"zadd",unsupportedCommand,-4,"wmF",0,NULL,1,1,1,0,0}},
+    {"zincrby", {"zincrby",unsupportedCommand,4,"wmF",0,NULL,1,1,1,0,0}},
+    {"zrem", {"zrem",unsupportedCommand,-3,"wF",0,NULL,1,1,1,0,0}},
+    {"zremrangebyscore", {"zremrangebyscore",unsupportedCommand,4,"w",0,NULL,1,1,1,0,0}},
+    {"zremrangebyrank", {"zremrangebyrank",unsupportedCommand,4,"w",0,NULL,1,1,1,0,0}},
+    {"zremrangebylex", {"zremrangebylex",unsupportedCommand,4,"w",0,NULL,1,1,1,0,0}},
+    {"zunionstore", {"zunionstore",unsupportedCommand,-4,"wm",0,NULL,0,0,0,0,0}},
+    {"zinterstore", {"zinterstore",unsupportedCommand,-4,"wm",0,NULL,0,0,0,0,0}},
+    {"zrange", {"zrange",unsupportedCommand,-4,"r",0,NULL,1,1,1,0,0}},
+    {"zrangebyscore", {"zrangebyscore",unsupportedCommand,-4,"r",0,NULL,1,1,1,0,0}},
+    {"zrevrangebyscore", {"zrevrangebyscore",unsupportedCommand,-4,"r",0,NULL,1,1,1,0,0}},
+    {"zrangebylex", {"zrangebylex",unsupportedCommand,-4,"r",0,NULL,1,1,1,0,0}},
+    {"zrevrangebylex", {"zrevrangebylex",unsupportedCommand,-4,"r",0,NULL,1,1,1,0,0}},
+    {"zcount", {"zcount",unsupportedCommand,4,"rF",0,NULL,1,1,1,0,0}},
+    {"zlexcount", {"zlexcount",unsupportedCommand,4,"rF",0,NULL,1,1,1,0,0}},
+    {"zrevrange", {"zrevrange",unsupportedCommand,-4,"r",0,NULL,1,1,1,0,0}},
+    {"zcard", {"zcard",unsupportedCommand,2,"rF",0,NULL,1,1,1,0,0}},
+    {"zscore", {"zscore",unsupportedCommand,3,"rF",0,NULL,1,1,1,0,0}},
+    {"zrank", {"zrank",unsupportedCommand,3,"rF",0,NULL,1,1,1,0,0}},
+    {"zrevrank", {"zrevrank",unsupportedCommand,3,"rF",0,NULL,1,1,1,0,0}},
+    {"zscan", {"zscan",unsupportedCommand,-3,"rR",0,NULL,1,1,1,0,0}},
+    {"hset", {"hset",unsupportedCommand,4,"wmF",0,NULL,1,1,1,0,0}},
+    {"hsetnx", {"hsetnx",unsupportedCommand,4,"wmF",0,NULL,1,1,1,0,0}},
+    {"hget", {"hget",unsupportedCommand,3,"rF",0,NULL,1,1,1,0,0}},
+    {"hmset", {"hmset",unsupportedCommand,-4,"wm",0,NULL,1,1,1,0,0}},
+    {"hmget", {"hmget",unsupportedCommand,-3,"r",0,NULL,1,1,1,0,0}},
+    {"hincrby", {"hincrby",unsupportedCommand,4,"wmF",0,NULL,1,1,1,0,0}},
+    {"hincrbyfloat", {"hincrbyfloat",unsupportedCommand,4,"wmF",0,NULL,1,1,1,0,0}},
+    {"hdel", {"hdel",unsupportedCommand,-3,"wF",0,NULL,1,1,1,0,0}},
+    {"hlen", {"hlen",unsupportedCommand,2,"rF",0,NULL,1,1,1,0,0}},
+    {"hstrlen", {"hstrlen",unsupportedCommand,3,"rF",0,NULL,1,1,1,0,0}},
+    {"hkeys", {"hkeys",unsupportedCommand,2,"rS",0,NULL,1,1,1,0,0}},
+    {"hvals", {"hvals",unsupportedCommand,2,"rS",0,NULL,1,1,1,0,0}},
+    {"hgetall", {"hgetall",unsupportedCommand,2,"r",0,NULL,1,1,1,0,0}},
+    {"hexists", {"hexists",unsupportedCommand,3,"rF",0,NULL,1,1,1,0,0}},
+    {"hscan", {"hscan",unsupportedCommand,-3,"rR",0,NULL,1,1,1,0,0}},
+    {"incrby", {"incrby",unsupportedCommand,3,"wmF",0,NULL,1,1,1,0,0}},
+    {"decrby", {"decrby",unsupportedCommand,3,"wmF",0,NULL,1,1,1,0,0}},
+    {"incrbyfloat", {"incrbyfloat",unsupportedCommand,3,"wmF",0,NULL,1,1,1,0,0}},
+    {"getset", {"getset",unsupportedCommand,3,"wm",0,NULL,1,1,1,0,0}},
+    {"mset", {"mset",unsupportedCommand,-3,"wm",0,NULL,1,-1,2,0,0}},
+    {"msetnx", {"msetnx",unsupportedCommand,-3,"wm",0,NULL,1,-1,2,0,0}},
+    {"randomkey", {"randomkey",unsupportedCommand,1,"rR",0,NULL,0,0,0,0,0}},
+    {"select", {"select",unsupportedCommand,2,"lF",0,NULL,0,0,0,0,0}},
+    {"move", {"move",unsupportedCommand,3,"wF",0,NULL,1,1,1,0,0}},
+    {"rename", {"rename",unsupportedCommand,3,"w",0,NULL,1,2,1,0,0}},
+    {"renamenx", {"renamenx",unsupportedCommand,3,"wF",0,NULL,1,2,1,0,0}},
+    {"expire", {"expire",unsupportedCommand,3,"wF",0,NULL,1,1,1,0,0}},
+    {"expireat", {"expireat",unsupportedCommand,3,"wF",0,NULL,1,1,1,0,0}},
+    {"pexpire", {"pexpire",unsupportedCommand,3,"wF",0,NULL,1,1,1,0,0}},
+    {"pexpireat", {"pexpireat",unsupportedCommand,3,"wF",0,NULL,1,1,1,0,0}},
+    {"keys", {"keys",unsupportedCommand,2,"rS",0,NULL,0,0,0,0,0}},
+    {"scan", {"scan",unsupportedCommand,-2,"rR",0,NULL,0,0,0,0,0}},
+    {"dbsize", {"dbsize",unsupportedCommand,1,"rF",0,NULL,0,0,0,0,0}},
+    {"auth", {"auth",unsupportedCommand,2,"sltF",0,NULL,0,0,0,0,0}},
+    {"ping", {"ping",unsupportedCommand,-1,"tF",0,NULL,0,0,0,0,0}},
+    {"echo", {"echo",unsupportedCommand,2,"F",0,NULL,0,0,0,0,0}},
+    {"save", {"save",unsupportedCommand,1,"as",0,NULL,0,0,0,0,0}},
+    {"bgsave", {"bgsave",unsupportedCommand,-1,"a",0,NULL,0,0,0,0,0}},
+    {"bgrewriteaof", {"bgrewriteaof",unsupportedCommand,1,"a",0,NULL,0,0,0,0,0}},
+    {"shutdown", {"shutdown",unsupportedCommand,-1,"alt",0,NULL,0,0,0,0,0}},
+    {"lastsave", {"lastsave",unsupportedCommand,1,"RF",0,NULL,0,0,0,0,0}},
+    {"type", {"type",unsupportedCommand,2,"rF",0,NULL,1,1,1,0,0}},
+    {"multi", {"multi",unsupportedCommand,1,"sF",0,NULL,0,0,0,0,0}},
+    {"exec", {"exec",unsupportedCommand,1,"sM",0,NULL,0,0,0,0,0}},
+    {"discard", {"discard",unsupportedCommand,1,"sF",0,NULL,0,0,0,0,0}},
+    {"sync", {"sync",unsupportedCommand,1,"ars",0,NULL,0,0,0,0,0}},
+    {"psync", {"psync",unsupportedCommand,3,"ars",0,NULL,0,0,0,0,0}},
+    {"replconf", {"replconf",unsupportedCommand,-1,"aslt",0,NULL,0,0,0,0,0}},
+    {"flushdb", {"flushdb",unsupportedCommand,1,"w",0,NULL,0,0,0,0,0}},
+    {"flushall", {"flushall",unsupportedCommand,1,"w",0,NULL,0,0,0,0,0}},
+    {"sort", {"sort",unsupportedCommand,-2,"wm",0,NULL,1,1,1,0,0}},
+    {"info", {"info",unsupportedCommand,-1,"lt",0,NULL,0,0,0,0,0}},
+    {"monitor", {"monitor",unsupportedCommand,1,"as",0,NULL,0,0,0,0,0}},
+    {"ttl", {"ttl",unsupportedCommand,2,"rF",0,NULL,1,1,1,0,0}},
+    {"touch", {"touch",unsupportedCommand,-2,"rF",0,NULL,1,1,1,0,0}},
+    {"pttl", {"pttl",unsupportedCommand,2,"rF",0,NULL,1,1,1,0,0}},
+    {"persist", {"persist",unsupportedCommand,2,"wF",0,NULL,1,1,1,0,0}},
+    {"slaveof", {"slaveof",unsupportedCommand,3,"ast",0,NULL,0,0,0,0,0}},
+    {"role", {"role",unsupportedCommand,1,"lst",0,NULL,0,0,0,0,0}},
+    {"debug", {"debug",unsupportedCommand,-1,"as",0,NULL,0,0,0,0,0}},
+    {"config", {"config",unsupportedCommand,-2,"lat",0,NULL,0,0,0,0,0}},
+    {"subscribe", {"subscribe",unsupportedCommand,-2,"pslt",0,NULL,0,0,0,0,0}},
+    {"unsubscribe", {"unsubscribe",unsupportedCommand,-1,"pslt",0,NULL,0,0,0,0,0}},
+    {"psubscribe", {"psubscribe",unsupportedCommand,-2,"pslt",0,NULL,0,0,0,0,0}},
+    {"punsubscribe", {"punsubscribe",unsupportedCommand,-1,"pslt",0,NULL,0,0,0,0,0}},
+    {"publish", {"publish",unsupportedCommand,3,"pltF",0,NULL,0,0,0,0,0}},
+    {"pubsub", {"pubsub",unsupportedCommand,-2,"pltR",0,NULL,0,0,0,0,0}},
+    {"watch", {"watch",unsupportedCommand,-2,"sF",0,NULL,1,-1,1,0,0}},
+    {"unwatch", {"unwatch",unsupportedCommand,1,"sF",0,NULL,0,0,0,0,0}},
+    {"cluster", {"cluster",unsupportedCommand,-2,"a",0,NULL,0,0,0,0,0}},
+    {"restore", {"restore",unsupportedCommand,-4,"wm",0,NULL,1,1,1,0,0}},
+    {"restore-asking", {"restore-asking",unsupportedCommand,-4,"wmk",0,NULL,1,1,1,0,0}},
+    {"migrate", {"migrate",unsupportedCommand,-6,"w",0,NULL,0,0,0,0,0}},
+    {"asking", {"asking",unsupportedCommand,1,"F",0,NULL,0,0,0,0,0}},
+    {"readonly", {"readonly",unsupportedCommand,1,"F",0,NULL,0,0,0,0,0}},
+    {"readwrite", {"readwrite",unsupportedCommand,1,"F",0,NULL,0,0,0,0,0}},
+    {"dump", {"dump",unsupportedCommand,2,"r",0,NULL,1,1,1,0,0}},
+    {"object", {"object",unsupportedCommand,3,"r",0,NULL,2,2,2,0,0}},
+    {"client", {"client",unsupportedCommand,-2,"as",0,NULL,0,0,0,0,0}},
+    {"eval", {"eval",unsupportedCommand,-3,"s",0,NULL,0,0,0,0,0}},
+    {"evalsha", {"evalsha",unsupportedCommand,-3,"s",0,NULL,0,0,0,0,0}},
+    {"slowlog", {"slowlog",unsupportedCommand,-2,"a",0,NULL,0,0,0,0,0}},
+    {"script", {"script",unsupportedCommand,-2,"s",0,NULL,0,0,0,0,0}},
+    {"time", {"time",unsupportedCommand,1,"RF",0,NULL,0,0,0,0,0}},
+    {"bitop", {"bitop",unsupportedCommand,-4,"wm",0,NULL,2,-1,1,0,0}},
+    {"bitcount", {"bitcount",unsupportedCommand,-2,"r",0,NULL,1,1,1,0,0}},
+    {"bitpos", {"bitpos",unsupportedCommand,-3,"r",0,NULL,1,1,1,0,0}},
+    {"wait", {"wait",unsupportedCommand,3,"s",0,NULL,0,0,0,0,0}},
+    {"command", {"command",unsupportedCommand,0,"lt",0,NULL,0,0,0,0,0}},
+    {"geoadd", {"geoadd",unsupportedCommand,-5,"wm",0,NULL,1,1,1,0,0}},
+    {"georadius", {"georadius",unsupportedCommand,-6,"w",0,NULL,1,1,1,0,0}},
+    {"georadiusbymember", {"georadiusbymember",unsupportedCommand,-5,"w",0,NULL,1,1,1,0,0}},
+    {"geohash", {"geohash",unsupportedCommand,-2,"r",0,NULL,1,1,1,0,0}},
+    {"geopos", {"geopos",unsupportedCommand,-2,"r",0,NULL,1,1,1,0,0}},
+    {"geodist", {"geodist",unsupportedCommand,-4,"r",0,NULL,1,1,1,0,0}},
+    {"pfselftest", {"pfselftest",unsupportedCommand,1,"a",0,NULL,0,0,0,0,0}},
+    {"pfadd", {"pfadd",unsupportedCommand,-2,"wmF",0,NULL,1,1,1,0,0}},
+    {"pfcount", {"pfcount",unsupportedCommand,-2,"r",0,NULL,1,-1,1,0,0}},
+    {"pfmerge", {"pfmerge",unsupportedCommand,-2,"wm",0,NULL,1,-1,1,0,0}},
+    {"pfdebug", {"pfdebug",unsupportedCommand,-3,"w",0,NULL,0,0,0,0,0}},
+    {"latency", {"latency",unsupportedCommand,-2,"aslt",0,NULL,0,0,0,0,0}}
+};
+
 void serverLog(int level, const char *fmt, ...) {
   va_list ap;
   char msg[LOG_MAX_LEN];
