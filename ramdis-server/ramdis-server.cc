@@ -9,6 +9,7 @@
 #include <queue>
 
 #include "ramdis-server.h"
+#include "commands.h"
 #include "RamCloud.h"
 #include "docopt.h"
 
@@ -18,11 +19,6 @@ std::mutex requestQMutex;
 // Queue elements are (file descriptor, response string)
 std::queue<std::pair<int, std::string>> responseQ;
 std::mutex responseQMutex;
-
-std::string unsupportedCommand(std::vector<std::string> *argv) {
-  std::string res("+Unsupported command.\r\n");
-  return res;
-}
 
 /* Our command table.
  *
@@ -77,7 +73,7 @@ std::string unsupportedCommand(std::vector<std::string> *argv) {
  *    are not fast commands.
  */
 std::map<const char*, redisCommand> redisCommandTable = {
-    {"get", {"get",unsupportedCommand,2,"rF",0,NULL,1,1,1,0,0}},
+    {"get", {"get",getCommand,2,"rF",0,NULL,1,1,1,0,0}},
     {"set", {"set",unsupportedCommand,-3,"wm",0,NULL,1,1,1,0,0}},
     {"setnx", {"setnx",unsupportedCommand,3,"wmF",0,NULL,1,1,1,0,0}},
     {"setex", {"setex",unsupportedCommand,4,"wm",0,NULL,1,1,1,0,0}},

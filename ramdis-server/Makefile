@@ -22,7 +22,7 @@ TARGETS := ramdis-server
 
 all: $(TARGETS)
 
-$(TARGETS): $(DOCOPT_DIR)/docopt.o $(TARGETS:=.o) sds.o zmalloc.o
+$(TARGETS): $(DOCOPT_DIR)/docopt.o $(TARGETS:=.o) sds.o zmalloc.o commands.o
 	$(CC) -o $@ $^ $(LDFLAGS) 
 
 %.o: %.cc %.h
