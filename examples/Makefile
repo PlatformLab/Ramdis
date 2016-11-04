@@ -15,7 +15,7 @@ CCOBJECTS := $(CCSOURCES:.c=.o)
 CCINCLUDES := -I..
 CCLDFLAGS := -L.. -lramdis
 CCFLAGS := $(CCINCLUDES)
-CCTARGETS := example_client
+CCTARGETS := 
 
 all: $(CXXTARGETS) $(CCTARGETS)
 
