@@ -546,8 +546,9 @@ void processInputBuffer(clientBuffer *c) {
   }
 }
 
-void requestExecutor(int threadNumber) {
-  serverLog(LL_DEBUG, "Thread %d started.", threadNumber);
+void requestExecutor(const char* coordLocator) {
+  RAMCloud::RamCloud client(coordLocator);
+
   while (true) {
     int cfd;
     std::vector<std::string> argv;
@@ -580,7 +581,7 @@ void requestExecutor(int threadNumber) {
         snprintf(buf, sizeof(buf), "+wrong number of arguments for '%s' command\r\n", argv[0].c_str());
         resp = buf;
       } else {
-        resp = cmd.proc(&argv);
+//        resp = cmd.proc(&client, &argv);
       }
     }
 
@@ -704,7 +705,8 @@ int main(int argc, char *argv[]) {
   /* Start request executor threads. */
   std::vector<std::thread> threads;
   for (int i = 0; i < (int)args["--threads"].asLong(); i++) {
-    threads.emplace_back(requestExecutor, i + 1);
+    threads.emplace_back(requestExecutor,
+        args["RAMCLOUDCOORDLOC"].asString().c_str());
   }
 
   /* In a loop:

@@ -1,8 +1,12 @@
 #ifndef __COMMANDS_H
 #define __COMMANDS_H
 
-std::string unsupportedCommand(std::vector<std::string> *argv);
+#include "RamCloud.h"
 
-std::string getCommand(std::vector<std::string> *argv);
+std::string unsupportedCommand(RAMCloud::RamCloud *, 
+    std::vector<std::string> *argv);
+
+std::string getCommand(RAMCloud::RamCloud *, 
+    std::vector<std::string> *argv);
 
 #endif

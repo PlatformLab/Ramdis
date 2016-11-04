@@ -5,6 +5,7 @@
 #include <vector>
 
 #include "sds.h"
+#include "RamCloud.h"
 
 #define CONFIG_DEFAULT_TCP_BACKLOG       511     /* TCP listen backlog */
 #define PROTO_IOBUF_LEN         (1024*16)  /* Generic I/O buffer size */
@@ -58,7 +59,8 @@ struct clientBuffer {
   long bulklen;
 };
 
-typedef std::string redisCommandProc(std::vector<std::string> *argv);
+typedef std::string redisCommandProc(RAMCloud::RamCloud *client, 
+    std::vector<std::string> *argv);
 typedef int *redisGetKeysProc(struct redisCommand *cmd, std::vector<std::string> *argv, int *numkeys);
 struct redisCommand {
     const char *name;
