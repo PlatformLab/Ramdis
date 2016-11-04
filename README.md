@@ -1,8 +1,9 @@
 Ramdis
 ======
 Ramdis is a RAMCloud-based implementation of Redis server, which communicates
-with clients using the Redis binary protocol. The goal is for any Redis client
-to be compatible with Ramdis.
+with clients using the [Redis binary
+protocol](http://redis.io/topics/protocol). The goal is for any Redis client to
+be compatible with Ramdis.
 
 # Instructions
 * `git submodule update --init --recursive`
