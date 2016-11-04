@@ -72,9 +72,9 @@ std::mutex responseQMutex;
  *    Note that commands that may trigger a DEL as a side effect (like SET)
  *    are not fast commands.
  */
-std::map<const char*, redisCommand> redisCommandTable = {
+std::map<std::string, redisCommand> redisCommandTable = {
     {"get", {"get",getCommand,2,"rF",0,NULL,1,1,1,0,0}},
-    {"set", {"set",unsupportedCommand,-3,"wm",0,NULL,1,1,1,0,0}},
+    {"set", {"set",setCommand,-3,"wm",0,NULL,1,1,1,0,0}},
     {"setnx", {"setnx",unsupportedCommand,3,"wmF",0,NULL,1,1,1,0,0}},
     {"setex", {"setex",unsupportedCommand,4,"wm",0,NULL,1,1,1,0,0}},
     {"psetex", {"psetex",unsupportedCommand,4,"wm",0,NULL,1,1,1,0,0}},
@@ -548,6 +548,7 @@ void processInputBuffer(clientBuffer *c) {
 
 void requestExecutor(const char* coordLocator) {
   RAMCloud::RamCloud client(coordLocator);
+  uint64_t tableId = client.createTable("default");
 
   while (true) {
     int cfd;
@@ -568,20 +569,20 @@ void requestExecutor(const char* coordLocator) {
 
     /* Do processing here. */
     std::string resp;
-    if (redisCommandTable.find(argv[0].c_str()) == redisCommandTable.end()) {
+    if (redisCommandTable.count(argv[0]) == 0) {
       char buf[128];
       snprintf(buf, sizeof(buf), "+unknown command '%s'\r\n", argv[0].c_str());
       resp = buf;
     } else {
-      redisCommand cmd = redisCommandTable[argv[0].c_str()];
+      redisCommand cmd = redisCommandTable[argv[0]];
 
       if ((cmd.arity > 0 && cmd.arity != argv.size()) ||
-               (argv.size() < -cmd.arity)) {
+               ((int)argv.size() < -cmd.arity)) {
         char buf[128];
-        snprintf(buf, sizeof(buf), "+wrong number of arguments for '%s' command\r\n", argv[0].c_str());
+        snprintf(buf, sizeof(buf), "+wrong number of arguments for '%s' command. Expected %d got %d.\r\n", argv[0].c_str(), cmd.arity, argv.size());
         resp = buf;
       } else {
-//        resp = cmd.proc(&client, &argv);
+        resp = cmd.proc(&client, tableId, &argv);
       }
     }
 
@@ -605,7 +606,7 @@ R"(Ramdis Server.
       --host=HOST  Host IPv4 address to use [default: 127.0.0.1] 
       --port=PORT  Port number to use [default: 6379]
       --threads=N  Number of request executor threads to run in parallel
-      [default: 4]
+      [default: 1]
 
 )";
 

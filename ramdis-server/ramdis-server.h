@@ -60,6 +60,7 @@ struct clientBuffer {
 };
 
 typedef std::string redisCommandProc(RAMCloud::RamCloud *client, 
+    uint64_t tableId,
     std::vector<std::string> *argv);
 typedef int *redisGetKeysProc(struct redisCommand *cmd, std::vector<std::string> *argv, int *numkeys);
 struct redisCommand {
