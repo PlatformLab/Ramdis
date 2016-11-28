@@ -33,6 +33,22 @@ std::string getCommand(RAMCloud::RamCloud *client,
   }
 }
 
+std::string incrCommand(RAMCloud::RamCloud *client,
+    uint64_t tableId,
+    std::vector<std::string> *argv) {
+  try {
+    uint64_t newValue = client->incrementInt64(tableId, (*argv)[1].c_str(),
+        (*argv)[1].length(), 1);
+    std::stringstream ss;
+    ss << ":" << newValue;
+    ss << "\r\n";
+    return ss.str();
+  } catch (RAMCloud::ObjectDoesntExistException& e) {
+    std::string res("+Unknown key.\r\n");
+    return res;
+  }
+}
+
 std::string setCommand(RAMCloud::RamCloud *client,
     uint64_t tableId,
     std::vector<std::string> *argv) {
