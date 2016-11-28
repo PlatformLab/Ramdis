@@ -779,6 +779,8 @@ void requestExecutor(const char* coordLocator) {
       }
     }
 
+    serverLog(LL_DEBUG, "RequestExecutor: Sending response: %s", resp.c_str());
+
     {
       std::lock_guard<std::mutex> lock(responseQMutex);
       responseQ.emplace(cfd, resp.c_str());
