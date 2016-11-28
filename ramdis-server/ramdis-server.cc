@@ -804,6 +804,8 @@ int main(int argc, char *argv[]) {
             }
           } else if (nbytes == 0) {
             /* Client closed connection. */
+            serverLog(LL_INFO, "Client connection closed.");
+
             it = clientBuffers.erase(it);
             FD_CLR(cfd, &cfds);
             continue;
