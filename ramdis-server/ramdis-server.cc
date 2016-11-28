@@ -351,6 +351,8 @@ int string2ll(const char *s, size_t slen, long long *value) {
 }
 
 int processInlineBuffer(clientBuffer *c) {
+    serverLog(LL_ERROR, "ProcessInlineBuffer: Not Implemented");
+
 //
 //    char *newline;
 //    int argc, j;
@@ -550,6 +552,8 @@ void requestExecutor(const char* coordLocator) {
   RAMCloud::RamCloud client(coordLocator);
   uint64_t tableId = client.createTable("default");
 
+  serverLog(LL_DEBUG, "Request executor thread connected to RAMCloud.");
+
   while (true) {
     int cfd;
     std::vector<std::string> argv;
@@ -565,6 +569,12 @@ void requestExecutor(const char* coordLocator) {
         requestQ.pop();
         break;
       }
+    }
+
+    if (VERBOSITY >= LL_DEBUG) {
+      std::string result;
+      for (auto const& s : argv) { result += " " + s; }
+      serverLog(LL_DEBUG, "RequestExecutor: Received command: %s", result.c_str());
     }
 
     /* Do processing here. */
