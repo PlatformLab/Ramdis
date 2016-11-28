@@ -2,6 +2,12 @@ CC := g++
 
 # Change this to change the default verbosity level
 # Defaults to LL_INFO
+#LL_FATAL 0
+#LL_ERROR 1
+#LL_WARN 2
+#LL_INFO 3
+#LL_DEBUG 4
+#LL_TRACE 5
 VERBOSITY ?= 3 # LL_INFO
 
 # Includes and library dependencies of RAMCloud
