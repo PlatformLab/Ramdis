@@ -11,6 +11,7 @@
 #include "ramdis-server.h"
 #include "commands.h"
 #include "RamCloud.h"
+#include "Cycles.h"
 #include "docopt.h"
 
 // Queue elements are (file descriptor, request arguements) 
@@ -580,6 +581,9 @@ void requestExecutor(const char* coordLocator) {
     /* Do processing here. */
     std::string resp;
     if (redisCommandTable.count(argv[0]) == 0) {
+      serverLog(LL_DEBUG, "RequestExecutor: Unknown command: %s",
+          argv[0].c_str());
+
       char buf[128];
       snprintf(buf, sizeof(buf), "+unknown command '%s'\r\n", argv[0].c_str());
       resp = buf;
@@ -588,11 +592,18 @@ void requestExecutor(const char* coordLocator) {
 
       if ((cmd.arity > 0 && cmd.arity != argv.size()) ||
                ((int)argv.size() < -cmd.arity)) {
+        serverLog(LL_DEBUG, "RequestExecutor: Wrong number of arguments. "
+            "Expected %d but got %d.", cmd.arity, argv.size());
+
         char buf[128];
         snprintf(buf, sizeof(buf), "+wrong number of arguments for '%s' command. Expected %d got %d.\r\n", argv[0].c_str(), cmd.arity, argv.size());
         resp = buf;
       } else {
+        uint64_t start = RAMCloud::Cycles::rdtsc();
         resp = cmd.proc(&client, tableId, &argv);
+        uint64_t end = RAMCloud::Cycles::rdtsc();
+        serverLog(LL_TRACE, "RequestExecutor: Command exec time: %dus", 
+            RAMCloud::Cycles::toMicroseconds(end - start));
       }
     }
 
