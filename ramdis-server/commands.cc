@@ -104,6 +104,8 @@ std::string lpushCommand(RAMCloud::RamCloud *client,
       newList, 
       newListSize);
 
+  free(newList);
+
   // Count number of elements in the new list.
   uint32_t pos = 0;
   uint32_t count = 0;
@@ -166,6 +168,8 @@ std::string rpushCommand(RAMCloud::RamCloud *client,
       newList, 
       newListSize);
 
+  free(newList);
+
   // Count number of elements in the new list.
   uint32_t pos = 0;
   uint32_t count = 0;
@@ -216,6 +220,8 @@ std::string lpopCommand(RAMCloud::RamCloud *client,
       newList, 
       newListSize);
 
+  free(newList);
+
   std::ostringstream oss;
   oss << "+" << element << "\r\n";
 
@@ -265,6 +271,8 @@ std::string rpopCommand(RAMCloud::RamCloud *client,
       (*argv)[1].length(),
       newList, 
       newListSize);
+
+  free(newList);
 
   std::ostringstream oss;
   oss << "+" << element << "\r\n";
