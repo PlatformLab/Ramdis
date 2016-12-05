@@ -119,6 +119,69 @@ std::string lpushCommand(RAMCloud::RamCloud *client,
   return oss.str();
 }
 
+std::string rpushCommand(RAMCloud::RamCloud *client,
+    uint64_t tableId,
+    std::vector<std::string> *argv) {
+  
+  // Arg validation.
+  if ((*argv)[2].length() >= (1 << (sizeof(uint16_t)*8))) {
+    std::string res("+List element must be less than 64KB in size.\r\n");
+    return res;
+  }
+
+  // Read out old list, if it exists.
+  RAMCloud::Buffer buffer;
+  bool listExists = true;
+  try {
+    client->read(tableId, (*argv)[1].c_str(),
+        (*argv)[1].length(), &buffer);
+  } catch (RAMCloud::ObjectDoesntExistException& e) {
+    listExists = false;
+  }
+
+  // Append new element to list.
+  size_t newListSize;
+  uint16_t elementLength = (uint16_t)(*argv)[2].length();
+  char* newList;
+  if (listExists) {
+    newListSize = sizeof(uint16_t) + elementLength + buffer.size();
+    newList = (char*)malloc(newListSize);
+    const char* oldList = static_cast<const char*>(buffer.getRange(0,
+            buffer.size()));
+    memcpy(newList, oldList, buffer.size());
+    memcpy(newList + buffer.size(), &elementLength, sizeof(uint16_t));
+    memcpy(newList + buffer.size() + sizeof(uint16_t), (*argv)[2].c_str(), 
+        elementLength);
+  } else {
+    newListSize = sizeof(uint16_t) + elementLength;
+    newList = (char*)malloc(newListSize);
+    memcpy(newList, &elementLength, sizeof(uint16_t));
+    memcpy(newList + sizeof(uint16_t), (*argv)[2].c_str(), elementLength);
+  }
+
+  // Write new list.
+  client->write(tableId, 
+      (*argv)[1].c_str(),
+      (*argv)[1].length(),
+      newList, 
+      newListSize);
+
+  // Count number of elements in the new list.
+  uint32_t pos = 0;
+  uint32_t count = 0;
+  printf("newListSize: %d\n", newListSize);
+  while (pos < newListSize) {
+    count++;
+    uint16_t len = *(uint16_t*)(newList + pos);
+    pos += sizeof(uint16_t) + len;
+  }
+  
+  std::ostringstream oss;
+  oss << ":" << count << "\r\n";
+
+  return oss.str();
+}
+
 std::string lrangeCommand(RAMCloud::RamCloud *client,
     uint64_t tableId,
     std::vector<std::string> *argv) {

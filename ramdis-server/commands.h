@@ -23,6 +23,10 @@ std::string lpushCommand(RAMCloud::RamCloud *,
     uint64_t,
     std::vector<std::string> *argv);
 
+std::string rpushCommand(RAMCloud::RamCloud *, 
+    uint64_t,
+    std::vector<std::string> *argv);
+
 std::string lrangeCommand(RAMCloud::RamCloud *, 
     uint64_t,
     std::vector<std::string> *argv);
