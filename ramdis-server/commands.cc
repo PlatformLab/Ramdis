@@ -182,6 +182,96 @@ std::string rpushCommand(RAMCloud::RamCloud *client,
   return oss.str();
 }
 
+std::string lpopCommand(RAMCloud::RamCloud *client,
+    uint64_t tableId,
+    std::vector<std::string> *argv) {
+  
+  // Read out list.
+  RAMCloud::Buffer buffer;
+  try {
+    client->read(tableId, (*argv)[1].c_str(),
+        (*argv)[1].length(), &buffer);
+  } catch (RAMCloud::ObjectDoesntExistException& e) {
+    return std::string("+Unknown key.");
+  }
+
+  if (buffer.size() == 0) {
+    return std::string("$-1\r\n");
+  }
+
+  const char* list = static_cast<const char*>(buffer.getRange(0, 
+        buffer.size()));
+  uint16_t len = *(uint16_t*)(list);
+  std::string element(list + sizeof(uint16_t), len);
+
+  size_t newListSize = buffer.size() - sizeof(uint16_t) - len;
+  char* newList = (char*)malloc(newListSize);
+  memcpy(newList, list + sizeof(uint16_t) + len, newListSize);
+  
+
+  // Write new list.
+  client->write(tableId, 
+      (*argv)[1].c_str(),
+      (*argv)[1].length(),
+      newList, 
+      newListSize);
+
+  std::ostringstream oss;
+  oss << "+" << element << "\r\n";
+
+  return oss.str();
+}
+
+std::string rpopCommand(RAMCloud::RamCloud *client,
+    uint64_t tableId,
+    std::vector<std::string> *argv) {
+  
+  // Read out list.
+  RAMCloud::Buffer buffer;
+  try {
+    client->read(tableId, (*argv)[1].c_str(),
+        (*argv)[1].length(), &buffer);
+  } catch (RAMCloud::ObjectDoesntExistException& e) {
+    return std::string("+Unknown key.");
+  }
+
+  if (buffer.size() == 0) {
+    return std::string("$-1\r\n");
+  }
+
+  const char* list = static_cast<const char*>(buffer.getRange(0, 
+        buffer.size()));
+
+  // Find last element of the list.
+  uint32_t pos = 0;
+  uint16_t len;
+  while (true) {
+    len = *(uint16_t*)(list + pos);
+    if (pos + sizeof(uint16_t) + len == buffer.size()) {
+      break;
+    }
+    pos += sizeof(uint16_t) + len;
+  }
+
+  std::string element(list + pos + sizeof(uint16_t), len);
+
+  size_t newListSize = buffer.size() - sizeof(uint16_t) - len;
+  char* newList = (char*)malloc(newListSize);
+  memcpy(newList, list, newListSize);
+
+  // Write new list.
+  client->write(tableId, 
+      (*argv)[1].c_str(),
+      (*argv)[1].length(),
+      newList, 
+      newListSize);
+
+  std::ostringstream oss;
+  oss << "+" << element << "\r\n";
+
+  return oss.str();
+}
+
 std::string lrangeCommand(RAMCloud::RamCloud *client,
     uint64_t tableId,
     std::vector<std::string> *argv) {
