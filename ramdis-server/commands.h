@@ -19,4 +19,8 @@ std::string setCommand(RAMCloud::RamCloud *,
     uint64_t,
     std::vector<std::string> *argv);
 
+std::string lpushCommand(RAMCloud::RamCloud *, 
+    uint64_t,
+    std::vector<std::string> *argv);
+
 #endif
