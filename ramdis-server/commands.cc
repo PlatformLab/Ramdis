@@ -171,7 +171,6 @@ std::string rpushCommand(RAMCloud::RamCloud *client,
   // Count number of elements in the new list.
   uint32_t pos = 0;
   uint32_t count = 0;
-  printf("newListSize: %d\n", newListSize);
   while (pos < newListSize) {
     count++;
     uint16_t len = *(uint16_t*)(newList + pos);
@@ -331,8 +330,6 @@ std::string lrangeCommand(RAMCloud::RamCloud *client,
   // Generate return message.
   std::ostringstream oss;
   uint32_t rangeSize = endIndex - startIndex + 1;
-  printf("startIndex: %d\n", startIndex);
-  printf("endIndex: %d\n", endIndex);
   oss << "*" << rangeSize << "\r\n";
 
   uint32_t count = 0;
