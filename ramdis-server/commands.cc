@@ -323,12 +323,17 @@ std::string lrangeCommand(RAMCloud::RamCloud *client,
   } else {
     if (end >= elements.size()) {
       endIndex = elements.size() - 1;
+    } else {
+      endIndex = end;
     }
   }
 
   // Generate return message.
   std::ostringstream oss;
-  oss << "*" << (endIndex - startIndex + 1) << "\r\n";
+  uint32_t rangeSize = endIndex - startIndex + 1;
+  printf("startIndex: %d\n", startIndex);
+  printf("endIndex: %d\n", endIndex);
+  oss << "*" << rangeSize << "\r\n";
 
   uint32_t count = 0;
   for(auto const& e: elements) {
