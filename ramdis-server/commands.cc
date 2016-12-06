@@ -104,8 +104,6 @@ std::string lpushCommand(RAMCloud::RamCloud *client,
       newList, 
       newListSize);
 
-  free(newList);
-
   // Count number of elements in the new list.
   uint32_t pos = 0;
   uint32_t count = 0;
@@ -114,6 +112,8 @@ std::string lpushCommand(RAMCloud::RamCloud *client,
     uint16_t len = *(uint16_t*)(newList + pos);
     pos += sizeof(uint16_t) + len;
   }
+
+  free(newList);
   
   std::ostringstream oss;
   oss << ":" << count << "\r\n";
@@ -168,8 +168,6 @@ std::string rpushCommand(RAMCloud::RamCloud *client,
       newList, 
       newListSize);
 
-  free(newList);
-
   // Count number of elements in the new list.
   uint32_t pos = 0;
   uint32_t count = 0;
@@ -180,6 +178,8 @@ std::string rpushCommand(RAMCloud::RamCloud *client,
     pos += sizeof(uint16_t) + len;
   }
   
+  free(newList);
+
   std::ostringstream oss;
   oss << ":" << count << "\r\n";
 
@@ -326,10 +326,9 @@ std::string lrangeCommand(RAMCloud::RamCloud *client,
     }
   }
 
-
   // Generate return message.
   std::ostringstream oss;
-  oss << "*" << elements.size() << "\r\n";
+  oss << "*" << (endIndex - startIndex + 1) << "\r\n";
 
   uint32_t count = 0;
   for(auto const& e: elements) {
