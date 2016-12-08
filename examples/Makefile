@@ -12,10 +12,10 @@ CXXTARGETS := ramdis-cli
 CC := gcc
 CCSOURCES := $(wildcard *.c)
 CCOBJECTS := $(CCSOURCES:.c=.o)
-CCINCLUDES := -I..
-CCLDFLAGS := -L.. -lramdis
+CCINCLUDES := -I../libramdis
+CCLDFLAGS := -L../libramdis -lramdis
 CCFLAGS := $(CCINCLUDES)
-CCTARGETS := 
+CCTARGETS := ramdis-client-test
 
 all: $(CXXTARGETS) $(CCTARGETS)
 
