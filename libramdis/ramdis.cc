@@ -116,7 +116,19 @@ Object* get(void* context, Object* key) {
 }
 
 long incr(void* context, Object* key) {
-  return 0;
+  Context* c = (Context*)context;
+  try {
+    uint64_t newValue = c->client->incrementInt64(c->tableId, 
+        key->data,
+        key->len,
+        1);
+    return (long)newValue;
+  } catch (RAMCloud::ObjectDoesntExistException& e) {
+    c->err = -1;
+    snprintf(c->errmsg, sizeof(c->errmsg), 
+        "Unknown key");
+    return -1;
+  }
 }
 
 uint64_t lpush(void* context, Object* key, Object* value) {
