@@ -1,6 +1,7 @@
 #include <string>
 #include <sstream>
 #include <vector>
+#include <stdarg.h>
 
 #include "ramdis.h"
 #include "RamCloud.h"
@@ -9,12 +10,53 @@
 struct Context {
   RAMCloud::RamCloud* client;
   uint64_t tableId;
+  int err;
+  char errmsg[256];
 };
+
+void serverLog(int level, const char *fmt, ...) {
+  va_list ap;
+  char msg[LOG_MAX_LEN];
+  char pmsg[LOG_MAX_LEN];
+
+  if ((level&0xff) > VERBOSITY) return;
+
+  va_start(ap, fmt);
+  vsnprintf(msg, sizeof(msg), fmt, ap);
+  va_end(ap);
+
+  switch(level) {
+    case LL_FATAL:
+      snprintf(pmsg, sizeof(pmsg), "FATAL: %s\n", msg);
+      break;
+    case LL_ERROR:
+      snprintf(pmsg, sizeof(pmsg), "ERROR: %s\n", msg);
+      break;
+    case LL_WARN:
+      snprintf(pmsg, sizeof(pmsg), "WARN: %s\n", msg);
+      break;
+    case LL_INFO:
+      snprintf(pmsg, sizeof(pmsg), "INFO: %s\n", msg);
+      break;
+    case LL_DEBUG:
+      snprintf(pmsg, sizeof(pmsg), "DEBUG: %s\n", msg);
+      break;
+    case LL_TRACE:
+      snprintf(pmsg, sizeof(pmsg), "TRACE: %s\n", msg);
+      break;
+    default:
+      break;
+  }
+
+  printf(pmsg);
+}
 
 void* connect(char* locator) {
   Context* c = new Context();
   c->client = new RAMCloud::RamCloud(locator);
   c->tableId = c->client->createTable("default");
+  c->err = 0;
+  memset(c->errmsg, '\0', sizeof(c->errmsg));
   return (void*)c;
 }
 
@@ -25,51 +67,87 @@ void disconnect(void* context) {
   delete c;
 }
 
+void freeObject(Object* obj) {
+  free(obj->data);
+  free(obj);
+}
+
 char* ping(void* context, char* msg) {
   return NULL;
 }
 
-void set(void* context, void* key, void* value) {
+void set(void* context, Object* key, Object* value) {
+  Context* c = (Context*)context;
 
+  if (key->len >= (1<<16)) {
+    c->err = -1;
+    snprintf(c->errmsg, sizeof(c->errmsg), 
+        "Key currently limited to be less than %dB", (1<<16));
+    return;
+  }
+
+  if (value->len >= (1<<20)) {
+    c->err = -1;
+    snprintf(c->errmsg, sizeof(c->errmsg), 
+        "Value currently limited to be less than %dB", (1<<20));
+    return;
+  }
+
+  c->client->write(c->tableId, key->data, key->len, value->data, value->len);
 }
 
-void* get(void* context, void* key) {
-  return NULL;
+Object* get(void* context, Object* key) {
+  Context* c = (Context*)context;
+  RAMCloud::Buffer buffer;
+  try {
+    c->client->read(c->tableId, key->data, key->len, &buffer);
+    Object* value = (Object*)malloc(sizeof(Object));
+    value->data = (void*)malloc(buffer.size());
+    value->len = buffer.size();
+    buffer.copy(0, value->len, value->data);
+    
+    return value;
+  } catch (RAMCloud::ObjectDoesntExistException& e) {
+    c->err = -1;
+    snprintf(c->errmsg, sizeof(c->errmsg), 
+        "Unknown key");
+    return NULL;
+  }
 }
 
-long incr(void* context, void* key) {
+long incr(void* context, Object* key) {
   return 0;
 }
 
-uint64_t lpush(void* context, void* key, void* value) {
+uint64_t lpush(void* context, Object* key, Object* value) {
   return 0;
 }
 
-uint64_t rpush(void* context, void* key, void* value) {
+uint64_t rpush(void* context, Object* key, Object* value) {
   return 0;
 }
 
-void* lpop(void* context, void* key) {
+Object* lpop(void* context, Object* key) {
   return NULL;
 }
 
-void* rpop(void* context, void* key) {
+Object* rpop(void* context, Object* key) {
   return NULL;
 }
 
-uint64_t sadd(void* context, void* key, void** values) {
+uint64_t sadd(void* context, Object* key, Object** values) {
   return 0;
 }
 
-void* spop(void* context, void* key) {
+Object* spop(void* context, Object* key) {
   return NULL;
 }
 
-void** lrange(void* context, void* key, long start, long end) {
+Object** lrange(void* context, Object* key, long start, long end) {
   return NULL;
 }
 
-void mset(void* context, void** keys, void** values) {
+void mset(void* context, Object** keys, Object** values) {
 
 }
 
