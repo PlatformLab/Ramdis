@@ -24,9 +24,16 @@ extern "C" {
     uint32_t len;
   } Object;
 
+  typedef struct {
+    Object* array;
+    uint32_t len;
+  } ObjectArray;
+
+  void printObjectArray(ObjectArray* objArray);
   void* connect(char* locator);
   void disconnect(void* context);
   void freeObject(Object* obj);
+  void freeObjectArray(ObjectArray* objArray);
   char* ping(void* context, char* msg);
   void set(void* context, Object* key, Object* value);
   Object* get(void* context, Object* key);
@@ -35,10 +42,10 @@ extern "C" {
   uint64_t rpush(void* context, Object* key, Object* value);
   Object* lpop(void* context, Object* key);
   Object* rpop(void* context, Object* key);
-  uint64_t sadd(void* context, Object* key, Object** values);
+  uint64_t sadd(void* context, Object* key, ObjectArray* valuesArray);
   Object* spop(void* context, Object* key);
-  Object** lrange(void* context, Object* key, long start, long end);
-  void mset(void* context, Object** keys, Object** values);
+  ObjectArray* lrange(void* context, Object* key, long start, long end);
+  void mset(void* context, ObjectArray* keysArray, ObjectArray* valuesArray);
 #ifdef __cplusplus
 }
 #endif

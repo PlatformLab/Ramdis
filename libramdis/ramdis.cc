@@ -7,6 +7,11 @@
 #include "RamCloud.h"
 #include "ClientException.h"
 
+/* TODO:
+ * [ ] Argument checking.
+ * [ ] Fix error reporting.
+ */
+
 struct Context {
   RAMCloud::RamCloud* client;
   uint64_t tableId;
@@ -72,27 +77,20 @@ void freeObject(Object* obj) {
   free(obj);
 }
 
+void freeObjectArray(ObjectArray* objArray) {
+  if (objArray->len > 0) {
+    free((char*)(objArray->array[0].data) - sizeof(uint16_t));
+    free(objArray->array);
+  }
+  free(objArray);
+}
+
 char* ping(void* context, char* msg) {
   return NULL;
 }
 
 void set(void* context, Object* key, Object* value) {
   Context* c = (Context*)context;
-
-  if (key->len >= (1<<16)) {
-    c->err = -1;
-    snprintf(c->errmsg, sizeof(c->errmsg), 
-        "Key currently limited to be less than %dB", (1<<16));
-    return;
-  }
-
-  if (value->len >= (1<<20)) {
-    c->err = -1;
-    snprintf(c->errmsg, sizeof(c->errmsg), 
-        "Value currently limited to be less than %dB", (1<<20));
-    return;
-  }
-
   c->client->write(c->tableId, key->data, key->len, value->data, value->len);
 }
 
@@ -132,22 +130,186 @@ long incr(void* context, Object* key) {
 }
 
 uint64_t lpush(void* context, Object* key, Object* value) {
-  return 0;
+  Context* c = (Context*)context;
+
+  // Read out old list, if it exists.
+  RAMCloud::Buffer buffer;
+  uint32_t oldListLen = 0;
+  try {
+    c->client->read(c->tableId, key->data, key->len, &buffer);
+    oldListLen = buffer.size();
+  } catch (RAMCloud::ObjectDoesntExistException& e) {
+    // oldListLen = 0;
+  }
+
+  // Append new element to list.
+  size_t newListLen = sizeof(uint16_t) + value->len + oldListLen;
+  char* newList = (char*)malloc(newListLen);
+  memcpy(newList, &value->len, sizeof(uint16_t));
+  memcpy(newList + sizeof(uint16_t), value->data, value->len);
+
+  uint64_t oldListElemCount = 0;
+  if (oldListLen > 0) {
+    const char* oldList = static_cast<const char*>(buffer.getRange(0,
+            oldListLen));
+    memcpy(newList + sizeof(uint16_t) + value->len, oldList, oldListLen);
+
+    // Count number of elements in the old list.
+    uint32_t pos = 0;
+    while (pos < oldListLen) {
+      oldListElemCount++;
+      uint16_t len = *(uint16_t*)(oldList + pos);
+      pos += sizeof(uint16_t) + len;
+    }
+  }
+
+  // Write new list.
+  c->client->write(c->tableId, 
+      key->data,
+      key->len,
+      newList, 
+      newListLen);
+
+  free(newList);
+  
+  return oldListElemCount + 1;
 }
 
 uint64_t rpush(void* context, Object* key, Object* value) {
-  return 0;
+  Context* c = (Context*)context;
+
+  // Read out old list, if it exists.
+  RAMCloud::Buffer buffer;
+  uint32_t oldListLen = 0;
+  try {
+    c->client->read(c->tableId, key->data, key->len, &buffer);
+    oldListLen = buffer.size();
+  } catch (RAMCloud::ObjectDoesntExistException& e) {
+    // oldListLen = 0;
+  }
+
+  // Append new element to list.
+  size_t newListLen = sizeof(uint16_t) + value->len + oldListLen;
+  char* newList = (char*)malloc(newListLen);
+  memcpy(newList + oldListLen, &value->len, sizeof(uint16_t));
+  memcpy(newList + oldListLen + sizeof(uint16_t), value->data, value->len);
+
+  uint64_t oldListElemCount = 0;
+  if (oldListLen > 0) {
+    const char* oldList = static_cast<const char*>(buffer.getRange(0,
+            oldListLen));
+    memcpy(newList, oldList, oldListLen);
+
+    // Count number of elements in the old list.
+    uint32_t pos = 0;
+    while (pos < oldListLen) {
+      oldListElemCount++;
+      uint16_t len = *(uint16_t*)(oldList + pos);
+      pos += sizeof(uint16_t) + len;
+    }
+  }
+
+  // Write new list.
+  c->client->write(c->tableId, 
+      key->data,
+      key->len,
+      newList, 
+      newListLen);
+
+  free(newList);
+  
+  return oldListElemCount + 1;
 }
 
 Object* lpop(void* context, Object* key) {
-  return NULL;
+  Context* c = (Context*)context;
+
+  // Read out old list, if it exists.
+  RAMCloud::Buffer buffer;
+  try {
+    c->client->read(c->tableId, key->data, key->len, &buffer);
+  } catch (RAMCloud::ObjectDoesntExistException& e) {
+    c->err = -1;
+    snprintf(c->errmsg, sizeof(c->errmsg), 
+        "Unknown key");
+    return NULL;
+  }
+
+  if (buffer.size() == 0) {
+    c->err = -1;
+    snprintf(c->errmsg, sizeof(c->errmsg), 
+        "List is empty");
+    return NULL;
+  }
+
+  // Parse head element.
+  const char* oldList = static_cast<const char*>(buffer.getRange(0,
+        buffer.size()));
+  uint16_t len = *(uint16_t*)oldList;
+  Object* value = (Object*)malloc(sizeof(Object));
+  value->data = (void*)malloc(len);
+  value->len = len;
+  memcpy(value->data, oldList + sizeof(uint16_t), len);
+
+  // Write back decapitated list.
+  c->client->write(c->tableId, 
+      key->data,
+      key->len,
+      oldList + sizeof(uint16_t) + len, 
+      buffer.size() - sizeof(uint16_t) - len);
+
+  return value;
 }
 
 Object* rpop(void* context, Object* key) {
-  return NULL;
+  Context* c = (Context*)context;
+
+  // Read out old list, if it exists.
+  RAMCloud::Buffer buffer;
+  try {
+    c->client->read(c->tableId, key->data, key->len, &buffer);
+  } catch (RAMCloud::ObjectDoesntExistException& e) {
+    c->err = -1;
+    snprintf(c->errmsg, sizeof(c->errmsg), 
+        "Unknown key");
+    return NULL;
+  }
+
+  if (buffer.size() == 0) {
+    c->err = -1;
+    snprintf(c->errmsg, sizeof(c->errmsg), 
+        "List is empty");
+    return NULL;
+  }
+
+  // Locate and parse tail element.
+  const char* oldList = static_cast<const char*>(buffer.getRange(0,
+        buffer.size()));
+  uint32_t pos = 0;
+  uint16_t len;
+  while (pos < buffer.size()) {
+    len = *(uint16_t*)(oldList + pos);
+    if (pos + sizeof(uint16_t) + len == buffer.size())
+      break;
+    pos += sizeof(uint16_t) + len;
+  }
+
+  Object* value = (Object*)malloc(sizeof(Object));
+  value->data = (void*)malloc(len);
+  value->len = len;
+  memcpy(value->data, oldList + pos + sizeof(uint16_t), len);
+
+  // Write back truncated list.
+  c->client->write(c->tableId, 
+      key->data,
+      key->len,
+      oldList, 
+      buffer.size() - sizeof(uint16_t) - len);
+
+  return value;
 }
 
-uint64_t sadd(void* context, Object* key, Object** values) {
+uint64_t sadd(void* context, Object* key, ObjectArray* values) {
   return 0;
 }
 
@@ -155,11 +317,57 @@ Object* spop(void* context, Object* key) {
   return NULL;
 }
 
-Object** lrange(void* context, Object* key, long start, long end) {
-  return NULL;
+ObjectArray* lrange(void* context, Object* key, long start, long end) {
+  Context* c = (Context*)context;
+
+  // Read out old list, if it exists.
+  RAMCloud::Buffer buffer;
+  try {
+    c->client->read(c->tableId, key->data, key->len, &buffer);
+  } catch (RAMCloud::ObjectDoesntExistException& e) {
+    c->err = -1;
+    snprintf(c->errmsg, sizeof(c->errmsg), 
+        "Unknown key");
+    return NULL;
+  }
+
+  if (buffer.size() == 0) {
+    c->err = -1;
+    snprintf(c->errmsg, sizeof(c->errmsg), 
+        "List is empty");
+    return NULL;
+  }
+
+  char* list = (char*)malloc(buffer.size());
+  buffer.copy(0, buffer.size(), list);
+
+  // Count elements.
+  uint32_t pos = 0;
+  uint32_t elements = 0;
+  while (pos < buffer.size()) {
+    elements++;
+    uint16_t len = *(uint16_t*)(list + pos);
+    pos += sizeof(uint16_t) + len;
+  }
+
+  ObjectArray* objArray = (ObjectArray*)malloc(sizeof(ObjectArray));
+  objArray->array = (Object*)malloc(sizeof(Object)*elements);
+  objArray->len = elements;
+  
+  pos = 0;
+  uint32_t i = 0;
+  while (pos < buffer.size()) {
+    uint16_t len = *(uint16_t*)(list + pos);
+    objArray->array[i].len = len;
+    objArray->array[i].data = (void*)(list + pos + sizeof(uint16_t));
+    pos += sizeof(uint16_t) + len;
+    i++;
+  }
+
+  return objArray;
 }
 
-void mset(void* context, Object** keys, Object** values) {
+void mset(void* context, ObjectArray* keysArray, Object* valuesArray) {
 
 }
 
