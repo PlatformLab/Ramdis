@@ -5,11 +5,16 @@
 
 #include "ramdis.h"
 #include "RamCloud.h"
+#include "Transaction.h"
 #include "ClientException.h"
 
 /* TODO:
  * [ ] Argument checking.
- * [ ] Fix error reporting.
+ * [ ] Fix error reporting. The context object is opaque to the user. There
+ * user therefore cannot use the err and errmsg fields.
+ * [ ] Instead of allocating an ObjectArray on the heap for returning to the
+ * user, just return it on the stack. The cost of malloc is greater than the
+ * cost of copying the whole structure in the stack.
  */
 
 struct Context {
@@ -17,6 +22,19 @@ struct Context {
   uint64_t tableId;
   int err;
   char errmsg[256];
+};
+
+struct ListIndexEntry {
+  int16_t segId;
+  uint16_t elemCount;
+  uint8_t segSizeKb;
+};
+
+#define MAX_LIST_SEG_SIZE_KB 5
+
+struct ListIndex {
+  ListIndexEntry* entries;
+  uint32_t len;
 };
 
 void serverLog(int level, const char *fmt, ...) {
@@ -129,96 +147,298 @@ long incr(void* context, Object* key) {
   }
 }
 
+void makeKey(RAMCloud::Buffer* buf, char* key, uint16_t keyLen, char* suffix,
+    uint8_t suffixLen) {
+  buf->append((void*)&keyLen, sizeof(uint16_t));
+  buf->append(key, keyLen);
+  buf->append((void*)&suffixLen, sizeof(uint8_t));
+  buf->append(suffix, suffixLen);
+}
+
 uint64_t lpush(void* context, Object* key, Object* value) {
   Context* c = (Context*)context;
+  RAMCloud::Transaction tx(c->client);
 
-  // Read out old list, if it exists.
-  RAMCloud::Buffer buffer;
-  uint32_t oldListLen = 0;
+  /* Construct RAMCloud key for the list index. */ 
+  RAMCloud::Buffer indexKey;
+  makeKey(&indexKey, (char*)key->data, key->len, "idx", strlen("idx") + 1);
+
+  /* Read the index. */
+  RAMCloud::Buffer indexValue;
+  bool listExists = true;
   try {
-    c->client->read(c->tableId, key->data, key->len, &buffer);
-    oldListLen = buffer.size();
+    tx.read(c->tableId, 
+        indexKey.getRange(0, indexKey.size()), 
+        indexKey.size(), 
+        &indexValue);
   } catch (RAMCloud::ObjectDoesntExistException& e) {
-    // oldListLen = 0;
+    listExists = false;
   }
 
-  // Append new element to list.
-  size_t newListLen = sizeof(uint16_t) + value->len + oldListLen;
-  char* newList = (char*)malloc(newListLen);
-  memcpy(newList, &value->len, sizeof(uint16_t));
-  memcpy(newList + sizeof(uint16_t), value->data, value->len);
+  ListIndex index;
+  bool headSegFull = false;
+  uint64_t totalElements = 0;
+  if (listExists && indexValue.size() != 0) {
+    index.entries = static_cast<ListIndexEntry*>(
+        indexValue.getRange(0, indexValue.size()));  
+    index.len = indexValue.size() / sizeof(ListIndexEntry);
 
-  uint64_t oldListElemCount = 0;
-  if (oldListLen > 0) {
-    const char* oldList = static_cast<const char*>(buffer.getRange(0,
-            oldListLen));
-    memcpy(newList + sizeof(uint16_t) + value->len, oldList, oldListLen);
+    if (index.entries[0].segSizeKb >= MAX_LIST_SEG_SIZE_KB) {
+      headSegFull = true;
+    } 
 
-    // Count number of elements in the old list.
-    uint32_t pos = 0;
-    while (pos < oldListLen) {
-      oldListElemCount++;
-      uint16_t len = *(uint16_t*)(oldList + pos);
-      pos += sizeof(uint16_t) + len;
+    for (int i = 0; i < index.len; i++) {
+      totalElements += index.entries[i].elemCount;
     }
   }
 
-  // Write new list.
-  c->client->write(c->tableId, 
-      key->data,
-      key->len,
-      newList, 
-      newListLen);
+  RAMCloud::Buffer segKey;
+  RAMCloud::Buffer newSegValue;
+  RAMCloud::Buffer newIndexValue;
+  if (!listExists || indexValue.size() == 0 || headSegFull) {
+    /* If the list doesn't exist, or the index is empty, or the head segment is
+     * full, then create a new head segment. */
+    uint16_t newSegId;
+    if (!listExists || indexValue.size() == 0) {
+      newSegId = 0;
+    } else {
+      newSegId = index.entries[0].segId + 1;
 
-  free(newList);
-  
-  return oldListElemCount + 1;
+      if (newSegId == index.entries[index.len - 1].segId) {
+        /* New head segment is colliding with the existing tail segment. */
+        /* In this case we need to attempt a compaction of the list segments.
+         * This is left for future work. For now return an error. */
+        c->err = -1;
+        snprintf(c->errmsg, sizeof(c->errmsg), 
+            "List is full");
+        return 0;
+      }
+    }
+    
+    char suffix[8];
+    sprintf(suffix, "%s", newSegId);
+    makeKey(&segKey, (char*)key->data, key->len, suffix, strlen(suffix) + 1);
+
+    uint16_t valueLen = (uint16_t)value->len;
+    newSegValue.append((void*)&valueLen, sizeof(uint16_t));
+    newSegValue.append((void*)&valueLen, sizeof(uint16_t));
+    newSegValue.append(value->data, valueLen);
+
+    /* Either the list does not exist or the index is completely empty of
+     * entries. In either case, put a new head segment index entry in the
+     * index, write it back, and write a new head segment. */
+    ListIndexEntry entry;
+    entry.segId = newSegId;
+    entry.elemCount = 1;
+    entry.segSizeKb = (uint8_t)(newSegValue.size() >> 10);
+
+    newIndexValue.append((void*)&entry, sizeof(ListIndexEntry));
+    if (listExists && indexValue.size() != 0) {
+      newIndexValue.append(&indexValue);
+    }
+  } else if (index.entries[0].elemCount == 0) {
+    /* The list exists, the index is not empty, but the head segment is empty.
+     * In this case we don't need to read the head segment to add the new
+     * value, we can just write the new head segment directly for lower
+     * latency. */
+    char suffix[8];
+    sprintf(suffix, "%s", index.entries[0].segId);
+    makeKey(&segKey, (char*)key->data, key->len, suffix, strlen(suffix) + 1);
+
+    uint16_t valueLen = (uint16_t)value->len;
+    newSegValue.append((void*)&valueLen, sizeof(uint16_t));
+    newSegValue.append((void*)&valueLen, sizeof(uint16_t));
+    newSegValue.append(value->data, valueLen);
+
+    index.entries[0].elemCount = 1;
+    index.entries[0].segSizeKb = (uint8_t)(newSegValue.size() >> 10);
+
+    newIndexValue.append(index.entries, index.len*sizeof(ListIndexEntry));
+  } else {
+    /* The list exists, the index is not empty, and the head segment is neither
+     * full nor totally empty. In this case we need to read the head segment
+     * and add the new value to it. */
+    char suffix[8];
+    sprintf(suffix, "%s", index.entries[0].segId);
+    makeKey(&segKey, (char*)key->data, key->len, suffix, strlen(suffix) + 1);
+
+    RAMCloud::Buffer segValue;
+    tx.read(c->tableId,
+        segKey.getRange(0, segKey.size()), 
+        segKey.size(), 
+        &segValue);
+
+    uint16_t valueLen = (uint16_t)value->len;
+    newSegValue.append(&segValue, 0, sizeof(uint16_t));
+    newSegValue.append((void*)&valueLen, sizeof(uint16_t));
+    newSegValue.append(value->data, valueLen);
+    newSegValue.append(&segValue, sizeof(uint16_t));
+
+    index.entries[0].elemCount++;
+    index.entries[0].segSizeKb = (uint8_t)(newSegValue.size() >> 10);
+
+    newIndexValue.append(index.entries, index.len*sizeof(ListIndexEntry));
+  }
+
+  tx.write(c->tableId,
+      segKey.getRange(0, segKey.size()),
+      segKey.size(),
+      newSegValue.getRange(0, newSegValue.size()),
+      newSegValue.size());
+
+  tx.write(c->tableId, 
+      indexKey.getRange(0, indexKey.size()), 
+      indexKey.size(), 
+      newIndexValue.getRange(0, newIndexValue.size()),
+      newIndexValue.size());
+
+  tx.commit();
+
+  return totalElements + 1;
 }
 
 uint64_t rpush(void* context, Object* key, Object* value) {
   Context* c = (Context*)context;
+  RAMCloud::Transaction tx(c->client);
 
-  // Read out old list, if it exists.
-  RAMCloud::Buffer buffer;
-  uint32_t oldListLen = 0;
+  /* Construct RAMCloud key for the list index. */ 
+  RAMCloud::Buffer indexKey;
+  makeKey(&indexKey, (char*)key->data, key->len, "idx", strlen("idx") + 1);
+
+  /* Read the index. */
+  RAMCloud::Buffer indexValue;
+  bool listExists = true;
   try {
-    c->client->read(c->tableId, key->data, key->len, &buffer);
-    oldListLen = buffer.size();
+    tx.read(c->tableId, 
+        indexKey.getRange(0, indexKey.size()), 
+        indexKey.size(), 
+        &indexValue);
   } catch (RAMCloud::ObjectDoesntExistException& e) {
-    // oldListLen = 0;
+    listExists = false;
   }
 
-  // Append new element to list.
-  size_t newListLen = sizeof(uint16_t) + value->len + oldListLen;
-  char* newList = (char*)malloc(newListLen);
-  memcpy(newList + oldListLen, &value->len, sizeof(uint16_t));
-  memcpy(newList + oldListLen + sizeof(uint16_t), value->data, value->len);
+  ListIndex index;
+  bool tailSegFull = false;
+  uint64_t totalElements = 0;
+  if (listExists && indexValue.size() != 0) {
+    index.entries = static_cast<ListIndexEntry*>(
+        indexValue.getRange(0, indexValue.size()));  
+    index.len = indexValue.size() / sizeof(ListIndexEntry);
 
-  uint64_t oldListElemCount = 0;
-  if (oldListLen > 0) {
-    const char* oldList = static_cast<const char*>(buffer.getRange(0,
-            oldListLen));
-    memcpy(newList, oldList, oldListLen);
+    if (index.entries[index.len - 1].segSizeKb >= MAX_LIST_SEG_SIZE_KB) {
+      tailSegFull = true;
+    } 
 
-    // Count number of elements in the old list.
-    uint32_t pos = 0;
-    while (pos < oldListLen) {
-      oldListElemCount++;
-      uint16_t len = *(uint16_t*)(oldList + pos);
-      pos += sizeof(uint16_t) + len;
+    for (int i = 0; i < index.len; i++) {
+      totalElements += index.entries[i].elemCount;
     }
   }
 
-  // Write new list.
-  c->client->write(c->tableId, 
-      key->data,
-      key->len,
-      newList, 
-      newListLen);
+  RAMCloud::Buffer segKey;
+  RAMCloud::Buffer newSegValue;
+  RAMCloud::Buffer newIndexValue;
+  if (!listExists || indexValue.size() == 0 || tailSegFull) {
+    /* If the list doesn't exist, or the index is empty, or the tail segment is
+     * full, then create a new head segment. */
+    uint16_t newSegId;
+    if (!listExists || indexValue.size() == 0) {
+      newSegId = 0;
+    } else {
+      newSegId = index.entries[index.len - 1].segId - 1;
 
-  free(newList);
-  
-  return oldListElemCount + 1;
+      if (newSegId == index.entries[0].segId) {
+        /* New tail segment is colliding with the existing head segment. */
+        /* In this case we need to attempt a compaction of the list segments.
+         * This is left for future work. For now return an error. */
+        c->err = -1;
+        snprintf(c->errmsg, sizeof(c->errmsg), 
+            "List is full");
+        return 0;
+      }
+    }
+    
+    char suffix[8];
+    sprintf(suffix, "%s", newSegId);
+    makeKey(&segKey, (char*)key->data, key->len, suffix, strlen(suffix) + 1);
+
+    uint16_t valueLen = (uint16_t)value->len;
+    newSegValue.append((void*)&valueLen, sizeof(uint16_t));
+    newSegValue.append((void*)&valueLen, sizeof(uint16_t));
+    newSegValue.append(value->data, valueLen);
+
+    /* Either the list does not exist or the index is completely empty of
+     * entries. In either case, put a new head segment index entry in the
+     * index, write it back, and write a new head segment. */
+    ListIndexEntry entry;
+    entry.segId = newSegId;
+    entry.elemCount = 1;
+    entry.segSizeKb = (uint8_t)(newSegValue.size() >> 10);
+
+    if (listExists && indexValue.size() != 0) {
+      newIndexValue.append(&indexValue);
+    }
+    newIndexValue.append((void*)&entry, sizeof(ListIndexEntry));
+  } else if (index.entries[index.len - 1].elemCount == 0) {
+    /* The list exists, the index is not empty, but the tail segment is empty.
+     * In this case we don't need to read the tail segment to add the new
+     * value, we can just write the new tail segment directly for lower
+     * latency. */
+    char suffix[8];
+    sprintf(suffix, "%s", index.entries[index.len - 1].segId);
+    makeKey(&segKey, (char*)key->data, key->len, suffix, strlen(suffix) + 1);
+
+    uint16_t valueLen = (uint16_t)value->len;
+    newSegValue.append((void*)&valueLen, sizeof(uint16_t));
+    newSegValue.append((void*)&valueLen, sizeof(uint16_t));
+    newSegValue.append(value->data, valueLen);
+
+    index.entries[index.len - 1].elemCount = 1;
+    index.entries[index.len - 1].segSizeKb = 
+        (uint8_t)(newSegValue.size() >> 10);
+
+    newIndexValue.append(index.entries, index.len*sizeof(ListIndexEntry));
+  } else {
+    /* The list exists, the index is not empty, and the tail segment is neither
+     * full nor totally empty. In this case we need to read the tail segment
+     * and add the new value to it. */
+    char suffix[8];
+    sprintf(suffix, "%s", index.entries[index.len - 1].segId);
+    makeKey(&segKey, (char*)key->data, key->len, suffix, strlen(suffix) + 1);
+
+    RAMCloud::Buffer segValue;
+    tx.read(c->tableId,
+        segKey.getRange(0, segKey.size()), 
+        segKey.size(), 
+        &segValue);
+
+    uint16_t valueLen = (uint16_t)value->len;
+    newSegValue.append((void*)&valueLen, sizeof(uint16_t));
+    newSegValue.append(&segValue, sizeof(uint16_t));
+    newSegValue.append((void*)&valueLen, sizeof(uint16_t));
+    newSegValue.append(value->data, valueLen);
+
+    index.entries[index.len - 1].elemCount++;
+    index.entries[index.len - 1].segSizeKb = 
+        (uint8_t)(newSegValue.size() >> 10);
+
+    newIndexValue.append(index.entries, index.len*sizeof(ListIndexEntry));
+  }
+
+  tx.write(c->tableId,
+      segKey.getRange(0, segKey.size()),
+      segKey.size(),
+      newSegValue.getRange(0, newSegValue.size()),
+      newSegValue.size());
+
+  tx.write(c->tableId, 
+      indexKey.getRange(0, indexKey.size()), 
+      indexKey.size(), 
+      newIndexValue.getRange(0, newIndexValue.size()),
+      newIndexValue.size());
+
+  tx.commit();
+
+  return totalElements + 1;
 }
 
 Object* lpop(void* context, Object* key) {
@@ -319,52 +539,164 @@ Object* spop(void* context, Object* key) {
 
 ObjectArray* lrange(void* context, Object* key, long start, long end) {
   Context* c = (Context*)context;
+  RAMCloud::Transaction tx(c->client);
 
-  // Read out old list, if it exists.
-  RAMCloud::Buffer buffer;
+  /* Construct RAMCloud key for the list index. */ 
+  RAMCloud::Buffer indexKey;
+  makeKey(&indexKey, (char*)key->data, key->len, "idx", strlen("idx") + 1);
+
+  /* Read the index. */
+  RAMCloud::Buffer indexValue;
+  bool listExists = true;
   try {
-    c->client->read(c->tableId, key->data, key->len, &buffer);
+    tx.read(c->tableId, 
+        indexKey.getRange(0, indexKey.size()), 
+        indexKey.size(), 
+        &indexValue);
   } catch (RAMCloud::ObjectDoesntExistException& e) {
+    listExists = false;
+  }
+
+  if (!listExists) {
     c->err = -1;
     snprintf(c->errmsg, sizeof(c->errmsg), 
         "Unknown key");
     return NULL;
+  } else if (indexValue.size() == 0) {
+    ObjectArray* objArray = (ObjectArray*)malloc(sizeof(ObjectArray));
+    objArray->array = NULL;
+    objArray->len = 0;
+
+    return objArray;
+  } else {
+    ListIndex index;
+    index.entries = static_cast<ListIndexEntry*>(
+        indexValue.getRange(0, indexValue.size()));  
+    index.len = indexValue.size() / sizeof(ListIndexEntry);
+
+    long totalElements = 0;
+    for (int i = 0; i < index.len; i++) {
+      totalElements += index.entries[i].elemCount;
+    }
+
+    uint64_t rangeStart, rangeEnd;
+    if (start < 0) {
+      if (totalElements + start < 0) {
+        rangeStart = 0;
+      } else {
+        rangeStart = (uint64_t)(totalElements + start);
+      }
+    } else {
+      rangeStart = (uint64_t)start;
+    }
+
+    if (end < 0) {
+      if (totalElements + end < 0) {
+        rangeEnd = 0;
+      } else {
+        rangeEnd = (uint64_t)(totalElements + end);
+      }
+    } else {
+      rangeEnd = (uint64_t)end;
+    }
+
+    if (rangeEnd < rangeStart) {
+      rangeEnd = rangeStart;
+    }
+
+    ObjectArray* objArray = (ObjectArray*)malloc(sizeof(ObjectArray));
+    objArray->len = (rangeEnd - rangeStart + 1);
+    objArray->array = (Object*)malloc(
+        sizeof(Object)*(objArray->len));
+
+    /* Count the number of list segments that are straddled by this range. */
+    uint64_t elementStartIndex = 0;
+    uint64_t elementsPriorToSegRange = 0;
+    uint32_t segmentsInRange = 0;
+    uint32_t firstSegInRange = 0;
+    for (int i = 0; i < index.len; i++) {
+      /* Current segment contains elements in the range:
+       * [elementIndex, elementIndex + index.entries[i].elemCount - 1]
+       * inclusive. */
+      uint64_t elementEndIndex = 
+          elementStartIndex + index.entries[i].elemCount - 1;
+      if (elementEndIndex < rangeStart) {
+        firstSegInRange++;
+        elementsPriorToSegRange += index.entries[i].elemCount;
+      } else if (rangeStart <= elementEndIndex && 
+          elementStartIndex <= rangeEnd) {
+        segmentsInRange++;
+      }
+
+      elementStartIndex += index.entries[i].elemCount;
+    }
+
+    RAMCloud::Tub<RAMCloud::Transaction::ReadOp> readOps[segmentsInRange];
+    RAMCloud::Buffer segValues[segmentsInRange];
+
+    /* Read segments asynchronously. */
+    for (int i = 0; i < segmentsInRange; i++) {
+      uint32_t segIndex = firstSegInRange + i;
+      RAMCloud::Buffer segKey;
+      char suffix[8];
+      sprintf(suffix, "%s", index.entries[segIndex].segId);
+      makeKey(&segKey, (char*)key->data, key->len, suffix, 
+          strlen(suffix) + 1);
+      readOps[i].construct(&tx, c->tableId, segKey.getRange(0,
+            segKey.size()), segKey.size(), &segValues[i], true);
+    }
+
+    uint64_t elementIndex = elementsPriorToSegRange;
+    RAMCloud::Buffer rangeBuf;
+    for (int i = 0; i < segmentsInRange; i++) {
+      uint32_t segIndex = firstSegInRange + i;
+      readOps[i].get()->wait();
+
+      if (rangeStart <= elementIndex &&
+          (elementIndex + index.entries[segIndex].elemCount - 1) <= rangeEnd) {
+        // All the elements in this segment are in the range.
+        rangeBuf.append(&segValues[i], sizeof(uint16_t));
+        elementIndex += index.entries[segIndex].elemCount;
+      } else {
+        uint32_t curPos = sizeof(uint16_t);
+        uint32_t startPos = curPos;
+        uint32_t endPos = curPos;
+        while (curPos < segValues[i].size()) {
+          uint16_t len = *static_cast<uint16_t*>(segValues[i].getRange(
+              curPos, sizeof(uint16_t)));
+          if (elementIndex < rangeStart) {
+            curPos += sizeof(uint16_t) + len;
+            startPos = curPos;
+          } else if (rangeStart <= elementIndex && elementIndex <= rangeEnd) {
+            curPos += sizeof(uint16_t) + len;
+            endPos = curPos;
+          } else {
+            // We are past the range we're looking for
+            break;
+          }
+          elementIndex++;
+        }
+        
+        // [startPos, endPos) is the region that falls within the search range.
+        rangeBuf.append(&segValues[i], startPos, endPos - startPos); 
+      }
+    }
+
+    // TODO: commit the transaction
+
+    char* objectData = (char*)malloc(rangeBuf.size());
+    rangeBuf.copy(0, rangeBuf.size(), objectData);
+
+    uint32_t curPos = 0;
+    for (int i = 0; i < objArray->len; i++) {
+      uint16_t len = *(uint16_t*)(objectData + curPos);
+      curPos += sizeof(uint16_t);
+      objArray->array[i].data = (void*)(objectData + curPos);
+      curPos += len;
+    }
+
+    return objArray;
   }
-
-  if (buffer.size() == 0) {
-    c->err = -1;
-    snprintf(c->errmsg, sizeof(c->errmsg), 
-        "List is empty");
-    return NULL;
-  }
-
-  char* list = (char*)malloc(buffer.size());
-  buffer.copy(0, buffer.size(), list);
-
-  // Count elements.
-  uint32_t pos = 0;
-  uint32_t elements = 0;
-  while (pos < buffer.size()) {
-    elements++;
-    uint16_t len = *(uint16_t*)(list + pos);
-    pos += sizeof(uint16_t) + len;
-  }
-
-  ObjectArray* objArray = (ObjectArray*)malloc(sizeof(ObjectArray));
-  objArray->array = (Object*)malloc(sizeof(Object)*elements);
-  objArray->len = elements;
-  
-  pos = 0;
-  uint32_t i = 0;
-  while (pos < buffer.size()) {
-    uint16_t len = *(uint16_t*)(list + pos);
-    objArray->array[i].len = len;
-    objArray->array[i].data = (void*)(list + pos + sizeof(uint16_t));
-    pos += sizeof(uint16_t) + len;
-    i++;
-  }
-
-  return objArray;
 }
 
 void mset(void* context, ObjectArray* keysArray, Object* valuesArray) {
