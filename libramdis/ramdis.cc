@@ -219,7 +219,7 @@ uint64_t lpush(void* context, Object* key, Object* value) {
     }
     
     char suffix[8];
-    sprintf(suffix, "%s", newSegId);
+    sprintf(suffix, "%d", newSegId);
     makeKey(&segKey, (char*)key->data, key->len, suffix, strlen(suffix) + 1);
 
     uint16_t valueLen = (uint16_t)value->len;
@@ -244,7 +244,7 @@ uint64_t lpush(void* context, Object* key, Object* value) {
      * value, we can just write the new head segment directly for lower
      * latency. */
     char suffix[8];
-    sprintf(suffix, "%s", index.entries[0].segId);
+    sprintf(suffix, "%d", index.entries[0].segId);
     makeKey(&segKey, (char*)key->data, key->len, suffix, strlen(suffix) + 1);
 
     uint16_t valueLen = (uint16_t)value->len;
@@ -260,7 +260,7 @@ uint64_t lpush(void* context, Object* key, Object* value) {
      * full nor totally empty. In this case we need to read the head segment
      * and add the new value to it. */
     char suffix[8];
-    sprintf(suffix, "%s", index.entries[0].segId);
+    sprintf(suffix, "%d", index.entries[0].segId);
     makeKey(&segKey, (char*)key->data, key->len, suffix, strlen(suffix) + 1);
 
     RAMCloud::Buffer segValue;
@@ -361,7 +361,7 @@ uint64_t rpush(void* context, Object* key, Object* value) {
     }
     
     char suffix[8];
-    sprintf(suffix, "%s", newSegId);
+    sprintf(suffix, "%d", newSegId);
     makeKey(&segKey, (char*)key->data, key->len, suffix, strlen(suffix) + 1);
 
     uint16_t valueLen = (uint16_t)value->len;
@@ -386,7 +386,7 @@ uint64_t rpush(void* context, Object* key, Object* value) {
      * value, we can just write the new tail segment directly for lower
      * latency. */
     char suffix[8];
-    sprintf(suffix, "%s", index.entries[index.len - 1].segId);
+    sprintf(suffix, "%d", index.entries[index.len - 1].segId);
     makeKey(&segKey, (char*)key->data, key->len, suffix, strlen(suffix) + 1);
 
     uint16_t valueLen = (uint16_t)value->len;
@@ -403,7 +403,7 @@ uint64_t rpush(void* context, Object* key, Object* value) {
      * full nor totally empty. In this case we need to read the tail segment
      * and add the new value to it. */
     char suffix[8];
-    sprintf(suffix, "%s", index.entries[index.len - 1].segId);
+    sprintf(suffix, "%d", index.entries[index.len - 1].segId);
     makeKey(&segKey, (char*)key->data, key->len, suffix, strlen(suffix) + 1);
 
     RAMCloud::Buffer segValue;
@@ -526,7 +526,7 @@ Object* lpop(void* context, Object* key) {
       // First segment that has 1 or more elements.
       RAMCloud::Buffer segKey;
       char suffix[8];
-      sprintf(suffix, "%s", index.entries[i].segId);
+      sprintf(suffix, "%d", index.entries[i].segId);
       makeKey(&segKey, (char*)key->data, key->len, suffix, strlen(suffix) + 1);
 
       RAMCloud::Buffer segValue;
@@ -697,7 +697,7 @@ Object* rpop(void* context, Object* key) {
       // First segment that has 1 or more elements.
       RAMCloud::Buffer segKey;
       char suffix[8];
-      sprintf(suffix, "%s", index.entries[i].segId);
+      sprintf(suffix, "%d", index.entries[i].segId);
       makeKey(&segKey, (char*)key->data, key->len, suffix, strlen(suffix) + 1);
 
       RAMCloud::Buffer segValue;
@@ -898,7 +898,7 @@ ObjectArray* lrange(void* context, Object* key, long start, long end) {
       uint32_t segIndex = firstSegInRange + i;
       RAMCloud::Buffer segKey;
       char suffix[8];
-      sprintf(suffix, "%s", index.entries[segIndex].segId);
+      sprintf(suffix, "%d", index.entries[segIndex].segId);
       makeKey(&segKey, (char*)key->data, key->len, suffix, 
           strlen(suffix) + 1);
       readOps[i].construct(&tx, c->tableId, segKey.getRange(0,
