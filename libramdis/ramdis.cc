@@ -15,6 +15,9 @@
  * [ ] Instead of allocating an ObjectArray on the heap for returning to the
  * user, just return it on the stack. The cost of malloc is greater than the
  * cost of copying the whole structure in the stack.
+ * [ ] Handle case where tx.commit() fails and a retry is needed.
+ * [ ] Remove list segments from RAMCloud that have their last element popped
+ * (?)
  */
 
 struct Context {
@@ -97,7 +100,7 @@ void freeObject(Object* obj) {
 
 void freeObjectArray(ObjectArray* objArray) {
   if (objArray->len > 0) {
-    free((char*)(objArray->array[0].data) - sizeof(uint16_t));
+    free((char*)(objArray->array[0].data));
     free(objArray->array);
   }
   free(objArray);
@@ -221,7 +224,6 @@ uint64_t lpush(void* context, Object* key, Object* value) {
 
     uint16_t valueLen = (uint16_t)value->len;
     newSegValue.append((void*)&valueLen, sizeof(uint16_t));
-    newSegValue.append((void*)&valueLen, sizeof(uint16_t));
     newSegValue.append(value->data, valueLen);
 
     /* Either the list does not exist or the index is completely empty of
@@ -247,7 +249,6 @@ uint64_t lpush(void* context, Object* key, Object* value) {
 
     uint16_t valueLen = (uint16_t)value->len;
     newSegValue.append((void*)&valueLen, sizeof(uint16_t));
-    newSegValue.append((void*)&valueLen, sizeof(uint16_t));
     newSegValue.append(value->data, valueLen);
 
     index.entries[0].elemCount = 1;
@@ -267,12 +268,14 @@ uint64_t lpush(void* context, Object* key, Object* value) {
         segKey.getRange(0, segKey.size()), 
         segKey.size(), 
         &segValue);
-
+    
     uint16_t valueLen = (uint16_t)value->len;
-    newSegValue.append(&segValue, 0, sizeof(uint16_t));
     newSegValue.append((void*)&valueLen, sizeof(uint16_t));
+    newSegValue.append(&segValue, 0, 
+        index.entries[0].elemCount * sizeof(uint16_t));
     newSegValue.append(value->data, valueLen);
-    newSegValue.append(&segValue, sizeof(uint16_t));
+    newSegValue.append(&segValue, 
+        index.entries[0].elemCount * sizeof(uint16_t));
 
     index.entries[0].elemCount++;
     index.entries[0].segSizeKb = (uint8_t)(newSegValue.size() >> 10);
@@ -363,7 +366,6 @@ uint64_t rpush(void* context, Object* key, Object* value) {
 
     uint16_t valueLen = (uint16_t)value->len;
     newSegValue.append((void*)&valueLen, sizeof(uint16_t));
-    newSegValue.append((void*)&valueLen, sizeof(uint16_t));
     newSegValue.append(value->data, valueLen);
 
     /* Either the list does not exist or the index is completely empty of
@@ -389,7 +391,6 @@ uint64_t rpush(void* context, Object* key, Object* value) {
 
     uint16_t valueLen = (uint16_t)value->len;
     newSegValue.append((void*)&valueLen, sizeof(uint16_t));
-    newSegValue.append((void*)&valueLen, sizeof(uint16_t));
     newSegValue.append(value->data, valueLen);
 
     index.entries[index.len - 1].elemCount = 1;
@@ -412,9 +413,11 @@ uint64_t rpush(void* context, Object* key, Object* value) {
         &segValue);
 
     uint16_t valueLen = (uint16_t)value->len;
+    newSegValue.append(&segValue, 0, 
+        index.entries[index.len - 1].elemCount * sizeof(uint16_t));
     newSegValue.append((void*)&valueLen, sizeof(uint16_t));
-    newSegValue.append(&segValue, sizeof(uint16_t));
-    newSegValue.append((void*)&valueLen, sizeof(uint16_t));
+    newSegValue.append(&segValue, 
+        index.entries[index.len - 1].elemCount * sizeof(uint16_t));
     newSegValue.append(value->data, valueLen);
 
     index.entries[index.len - 1].elemCount++;
@@ -443,11 +446,19 @@ uint64_t rpush(void* context, Object* key, Object* value) {
 
 Object* lpop(void* context, Object* key) {
   Context* c = (Context*)context;
+  RAMCloud::Transaction tx(c->client);
 
-  // Read out old list, if it exists.
-  RAMCloud::Buffer buffer;
+  /* Construct RAMCloud key for the list index. */ 
+  RAMCloud::Buffer indexKey;
+  makeKey(&indexKey, (char*)key->data, key->len, "idx", strlen("idx") + 1);
+
+  /* Read the index. */
+  RAMCloud::Buffer indexValue;
   try {
-    c->client->read(c->tableId, key->data, key->len, &buffer);
+    tx.read(c->tableId, 
+        indexKey.getRange(0, indexKey.size()), 
+        indexKey.size(), 
+        &indexValue);
   } catch (RAMCloud::ObjectDoesntExistException& e) {
     c->err = -1;
     snprintf(c->errmsg, sizeof(c->errmsg), 
@@ -455,39 +466,170 @@ Object* lpop(void* context, Object* key) {
     return NULL;
   }
 
-  if (buffer.size() == 0) {
+  if (indexValue.size() == 0) {
+    /* List exists but it's empty. */
     c->err = -1;
     snprintf(c->errmsg, sizeof(c->errmsg), 
         "List is empty");
     return NULL;
   }
 
-  // Parse head element.
-  const char* oldList = static_cast<const char*>(buffer.getRange(0,
-        buffer.size()));
-  uint16_t len = *(uint16_t*)oldList;
-  Object* value = (Object*)malloc(sizeof(Object));
-  value->data = (void*)malloc(len);
-  value->len = len;
-  memcpy(value->data, oldList + sizeof(uint16_t), len);
+  ListIndex index;
+  uint64_t totalElements = 0;
+  index.entries = static_cast<ListIndexEntry*>(
+      indexValue.getRange(0, indexValue.size()));  
+  index.len = indexValue.size() / sizeof(ListIndexEntry);
 
-  // Write back decapitated list.
-  c->client->write(c->tableId, 
-      key->data,
-      key->len,
-      oldList + sizeof(uint16_t) + len, 
-      buffer.size() - sizeof(uint16_t) - len);
+  for (int i = 0; i < index.len; i++) {
+    totalElements += index.entries[i].elemCount;
+  }
 
-  return value;
+  if (totalElements == 0) {
+    /* List index has entries but no elements in the list. In this case, reset
+     * the index to a default state, if needed. */
+    if (index.len != 1 || index.entries[0].segId != 0) {
+      ListIndexEntry entry;
+      entry.segId = 0;
+      entry.elemCount = 0;
+      entry.segSizeKb = 0;
+
+      tx.write(c->tableId, 
+          indexKey.getRange(0, indexKey.size()),
+          indexKey.size(),
+          &entry,
+          sizeof(ListIndexEntry));
+
+      tx.commit();
+    }
+
+    c->err = -1;
+    snprintf(c->errmsg, sizeof(c->errmsg), 
+        "List is empty");
+    return NULL;
+  }
+
+  /* At this point, we know that the list exists, the index has entries, and
+   * the sum of elements in the segments is non-zero. We don't know where the
+   * head element is, however. The common case is that it's in the first
+   * segment, and not the last element. Sometimes it will be the last element
+   * there, and we need to remove that segment from the index. In rare cases,
+   * the head segments may be empty and need to be removed on the way to the
+   * head element. It may also be the case that after removing the last element
+   * from a segment, the following segments are empty. In this case we take the
+   * time to do some clean-up and remove those segments from the index. */
+
+  for (int i = 0; i < index.len; i++) {
+    if (index.entries[i].elemCount == 0) {
+      // Skip over the leading segments that are empty.
+      continue;
+    } else {
+      // First segment that has 1 or more elements.
+      RAMCloud::Buffer segKey;
+      char suffix[8];
+      sprintf(suffix, "%s", index.entries[i].segId);
+      makeKey(&segKey, (char*)key->data, key->len, suffix, strlen(suffix) + 1);
+
+      RAMCloud::Buffer segValue;
+      tx.read(c->tableId,
+          segKey.getRange(0, segKey.size()), 
+          segKey.size(), 
+          &segValue);
+
+      // Extract value from segment.
+      uint16_t len = *static_cast<uint16_t*>(segValue.getRange(
+            0, sizeof(uint16_t)));
+      Object* obj = (Object*)malloc(sizeof(Object));
+      obj->data = (void*)malloc(len);
+      obj->len = len;
+      segValue.copy(index.entries[i].elemCount * sizeof(uint16_t), len, 
+          obj->data);
+
+      if (index.entries[i].elemCount == 1) {
+        /* This is the last element in the segment. In this case, remove the
+         * segment from the list, as well as any following segments that are
+         * empty. */
+        if (totalElements == 1) {
+          /* This segment contained the very last element in this list. The
+           * list is now completely empty. In this case, reset the list to a
+           * default state. We currently do this by resetting the index and
+           * don't actually remove the segments that have a single object in
+           * them from RAMCloud. They will eventually be overwriten if the list
+           * is sufficiently filled again. */
+          ListIndexEntry entry;
+          entry.segId = 0;
+          entry.elemCount = 0;
+          entry.segSizeKb = 0;
+
+          tx.write(c->tableId, 
+              indexKey.getRange(0, indexKey.size()),
+              indexKey.size(),
+              &entry,
+              sizeof(ListIndexEntry));
+
+          tx.commit();
+        } else {
+          /* There are more elements in segments down the line. Find the next
+           * non-empty segment to be the head segment. */
+          for (int j = i + 1; j < index.len; j++) {
+            if (index.entries[j].elemCount > 0) {
+              tx.write(c->tableId,
+                  indexKey.getRange(0, indexKey.size()),
+                  indexKey.size(),
+                  &index.entries[j],
+                  (index.len - j)*sizeof(ListIndexEntry));
+
+              tx.commit();
+            }
+          }
+        }
+      } else {
+        /* The element that we just popped was not the last element in the
+         * segment. In this case write the new segment value back and update
+         * the index. */
+        RAMCloud::Buffer newSegValue;
+        newSegValue.append(&segValue, sizeof(uint16_t), 
+            (index.entries[i].elemCount - 1) * sizeof(uint16_t));
+        newSegValue.append(&segValue, 
+            (index.entries[i].elemCount * sizeof(uint16_t)) + len);
+
+        tx.write(c->tableId,
+            segKey.getRange(0, segKey.size()),
+            segKey.size(),
+            newSegValue.getRange(0, newSegValue.size()),
+            newSegValue.size());
+
+        index.entries[i].elemCount--;
+        index.entries[i].segSizeKb = (uint8_t)(newSegValue.size() >> 10);
+
+        tx.write(c->tableId,
+            indexKey.getRange(0, indexKey.size()),
+            indexKey.size(),
+            &index.entries[i],
+            (index.len - i)*sizeof(ListIndexEntry));
+
+        tx.commit();
+      }
+      
+      return obj;
+    }
+  }
 }
 
 Object* rpop(void* context, Object* key) {
   Context* c = (Context*)context;
+  RAMCloud::Transaction tx(c->client);
 
-  // Read out old list, if it exists.
-  RAMCloud::Buffer buffer;
+  /* Construct RAMCloud key for the list index. */ 
+  RAMCloud::Buffer indexKey;
+  makeKey(&indexKey, (char*)key->data, key->len, "idx", strlen("idx") + 1);
+
+  /* Read the index. */
+  RAMCloud::Buffer indexValue;
   try {
-    c->client->read(c->tableId, key->data, key->len, &buffer);
+    tx.read(c->tableId, 
+        indexKey.getRange(0, indexKey.size()), 
+        indexKey.size(), 
+        &indexValue);
   } catch (RAMCloud::ObjectDoesntExistException& e) {
     c->err = -1;
     snprintf(c->errmsg, sizeof(c->errmsg), 
@@ -495,38 +637,155 @@ Object* rpop(void* context, Object* key) {
     return NULL;
   }
 
-  if (buffer.size() == 0) {
+  if (indexValue.size() == 0) {
+    /* List exists but it's empty. */
     c->err = -1;
     snprintf(c->errmsg, sizeof(c->errmsg), 
         "List is empty");
     return NULL;
   }
 
-  // Locate and parse tail element.
-  const char* oldList = static_cast<const char*>(buffer.getRange(0,
-        buffer.size()));
-  uint32_t pos = 0;
-  uint16_t len;
-  while (pos < buffer.size()) {
-    len = *(uint16_t*)(oldList + pos);
-    if (pos + sizeof(uint16_t) + len == buffer.size())
-      break;
-    pos += sizeof(uint16_t) + len;
+  ListIndex index;
+  uint64_t totalElements = 0;
+  index.entries = static_cast<ListIndexEntry*>(
+      indexValue.getRange(0, indexValue.size()));  
+  index.len = indexValue.size() / sizeof(ListIndexEntry);
+
+  for (int i = 0; i < index.len; i++) {
+    totalElements += index.entries[i].elemCount;
   }
 
-  Object* value = (Object*)malloc(sizeof(Object));
-  value->data = (void*)malloc(len);
-  value->len = len;
-  memcpy(value->data, oldList + pos + sizeof(uint16_t), len);
+  if (totalElements == 0) {
+    /* List index has entries but no elements in the list. In this case, reset
+     * the index to a default state, if needed. */
+    if (index.len != 1 || index.entries[0].segId != 0) {
+      ListIndexEntry entry;
+      entry.segId = 0;
+      entry.elemCount = 0;
+      entry.segSizeKb = 0;
 
-  // Write back truncated list.
-  c->client->write(c->tableId, 
-      key->data,
-      key->len,
-      oldList, 
-      buffer.size() - sizeof(uint16_t) - len);
+      tx.write(c->tableId, 
+          indexKey.getRange(0, indexKey.size()),
+          indexKey.size(),
+          &entry,
+          sizeof(ListIndexEntry));
 
-  return value;
+      tx.commit();
+    }
+
+    c->err = -1;
+    snprintf(c->errmsg, sizeof(c->errmsg), 
+        "List is empty");
+    return NULL;
+  }
+
+  /* At this point, we know that the list exists, the index has entries, and
+   * the sum of elements in the segments is non-zero. We don't know where the
+   * tail element is, however. The common case is that it's in the last
+   * segment, and not the last element. Sometimes it will be the last element
+   * there, and we need to remove that segment from the index. In rare cases,
+   * the tail segments may be empty and need to be removed on the way to the
+   * tail element. It may also be the case that after removing the last element
+   * from a segment, the following segments are empty. In this case we take the
+   * time to do some clean-up and remove those segments from the index. */
+
+  for (int i = index.len - 1; i >= 0; i--) {
+    if (index.entries[i].elemCount == 0) {
+      // Skip over the leading segments that are empty.
+      continue;
+    } else {
+      // First segment that has 1 or more elements.
+      RAMCloud::Buffer segKey;
+      char suffix[8];
+      sprintf(suffix, "%s", index.entries[i].segId);
+      makeKey(&segKey, (char*)key->data, key->len, suffix, strlen(suffix) + 1);
+
+      RAMCloud::Buffer segValue;
+      tx.read(c->tableId,
+          segKey.getRange(0, segKey.size()), 
+          segKey.size(), 
+          &segValue);
+
+      // Extract value from segment.
+      uint16_t len = *static_cast<uint16_t*>(segValue.getRange(
+            (index.entries[i].elemCount - 1) * sizeof(uint16_t), 
+            sizeof(uint16_t)));
+      Object* obj = (Object*)malloc(sizeof(Object));
+      obj->data = (void*)malloc(len);
+      obj->len = len;
+      segValue.copy(segValue.size() - len, len, obj->data);
+
+      if (index.entries[i].elemCount == 1) {
+        /* This is the last element in the segment. In this case, remove the
+         * segment from the list, as well as any following segments that are
+         * empty. */
+        if (totalElements == 1) {
+          /* This segment contained the very last element in this list. The
+           * list is now completely empty. In this case, reset the list to a
+           * default state. We currently do this by resetting the index and
+           * don't actually remove the segments that have a single object in
+           * them from RAMCloud. They will eventually be overwriten if the list
+           * is sufficiently filled again. */
+          ListIndexEntry entry;
+          entry.segId = 0;
+          entry.elemCount = 0;
+          entry.segSizeKb = 0;
+
+          tx.write(c->tableId, 
+              indexKey.getRange(0, indexKey.size()),
+              indexKey.size(),
+              &entry,
+              sizeof(ListIndexEntry));
+
+          tx.commit();
+        } else {
+          /* There are more elements in segments up the line. Find the next
+           * non-empty segment to be the tail segment. */
+          for (int j = i - 1; j >= 0; j--) {
+            if (index.entries[j].elemCount > 0) {
+              tx.write(c->tableId,
+                  indexKey.getRange(0, indexKey.size()),
+                  indexKey.size(),
+                  &index.entries[0],
+                  (j + 1)*sizeof(ListIndexEntry));
+
+              tx.commit();
+            }
+          }
+        }
+      } else {
+        /* The element that we just popped was not the last element in the
+         * list. In this case write the new segment value back and update the
+         * index. */
+        RAMCloud::Buffer newSegValue;
+        newSegValue.append(&segValue, 0, 
+            (index.entries[i].elemCount - 1) * sizeof(uint16_t));
+        newSegValue.append(&segValue, 
+            (index.entries[i].elemCount * sizeof(uint16_t)),
+            segValue.size() - (index.entries[i].elemCount * sizeof(uint16_t))
+            - len);
+
+        tx.write(c->tableId,
+            segKey.getRange(0, segKey.size()),
+            segKey.size(),
+            newSegValue.getRange(0, newSegValue.size()),
+            newSegValue.size());
+
+        index.entries[i].elemCount--;
+        index.entries[i].segSizeKb = (uint8_t)(newSegValue.size() >> 10);
+
+        tx.write(c->tableId,
+            indexKey.getRange(0, indexKey.size()),
+            indexKey.size(),
+            &index.entries[i],
+            (index.len - i)*sizeof(ListIndexEntry));
+
+        tx.commit();
+      }
+      
+      return obj;
+    }
+  }
 }
 
 uint64_t sadd(void* context, Object* key, ObjectArray* values) {
@@ -652,34 +911,39 @@ ObjectArray* lrange(void* context, Object* key, long start, long end) {
       uint32_t segIndex = firstSegInRange + i;
       readOps[i].get()->wait();
 
-      if (rangeStart <= elementIndex &&
-          (elementIndex + index.entries[segIndex].elemCount - 1) <= rangeEnd) {
-        // All the elements in this segment are in the range.
-        rangeBuf.append(&segValues[i], sizeof(uint16_t));
-        elementIndex += index.entries[segIndex].elemCount;
+      // Determine index range within this segment (a slice).
+      uint32_t sliceStart, sliceEnd;
+      if (rangeStart <= elementIndex) {
+        sliceStart = 0;
       } else {
-        uint32_t curPos = sizeof(uint16_t);
-        uint32_t startPos = curPos;
-        uint32_t endPos = curPos;
-        while (curPos < segValues[i].size()) {
-          uint16_t len = *static_cast<uint16_t*>(segValues[i].getRange(
-              curPos, sizeof(uint16_t)));
-          if (elementIndex < rangeStart) {
-            curPos += sizeof(uint16_t) + len;
-            startPos = curPos;
-          } else if (rangeStart <= elementIndex && elementIndex <= rangeEnd) {
-            curPos += sizeof(uint16_t) + len;
-            endPos = curPos;
-          } else {
-            // We are past the range we're looking for
-            break;
-          }
-          elementIndex++;
-        }
-        
-        // [startPos, endPos) is the region that falls within the search range.
-        rangeBuf.append(&segValues[i], startPos, endPos - startPos); 
+        sliceStart = rangeStart - elementIndex;
       }
+
+      if ((elementIndex + index.entries[segIndex].elemCount - 1) <= rangeEnd)
+      {
+        sliceEnd = index.entries[segIndex].elemCount - 1;
+      } else {
+        sliceEnd = rangeEnd - elementIndex;
+      }
+
+      uint16_t* valLengthArray = static_cast<uint16_t*>(segValues[i].getRange(
+            0, index.entries[segIndex].elemCount * sizeof(uint16_t)));
+
+      uint32_t sliceByteOffset = 
+          index.entries[segIndex].elemCount * sizeof(uint16_t);
+      for (int j = 0; j < sliceStart; j++) {
+        sliceByteOffset += valLengthArray[j];
+      }
+
+      uint32_t sliceLength = 0;
+      for (int j = sliceStart; j <= sliceEnd; j++) {
+        sliceLength += valLengthArray[j];
+        objArray->array[elementIndex + j - rangeStart].len = valLengthArray[j]; 
+      }
+
+      rangeBuf.append(&segValues[i], sliceByteOffset, sliceLength);
+
+      elementIndex += index.entries[segIndex].elemCount;
     }
 
     // TODO: commit the transaction
@@ -687,12 +951,10 @@ ObjectArray* lrange(void* context, Object* key, long start, long end) {
     char* objectData = (char*)malloc(rangeBuf.size());
     rangeBuf.copy(0, rangeBuf.size(), objectData);
 
-    uint32_t curPos = 0;
-    for (int i = 0; i < objArray->len; i++) {
-      uint16_t len = *(uint16_t*)(objectData + curPos);
-      curPos += sizeof(uint16_t);
-      objArray->array[i].data = (void*)(objectData + curPos);
-      curPos += len;
+    uint32_t offset = 0;
+    for (int i = 0; i < objArray-> len; i++) {
+      objArray->array[i].data = (void*)(objectData + offset);
+      offset += objArray->array[i].len;
     }
 
     return objArray;
