@@ -572,6 +572,7 @@ Object* lpop(Context* c, Object* key) {
                   (index.len - j)*sizeof(ListIndexEntry));
 
               tx.commit();
+              break;
             }
           }
         }
@@ -743,6 +744,7 @@ Object* rpop(Context* c, Object* key) {
                   (j + 1)*sizeof(ListIndexEntry));
 
               tx.commit();
+              break;
             }
           }
         }
@@ -770,8 +772,8 @@ Object* rpop(Context* c, Object* key) {
         tx.write(c->tableId,
             indexKey.getRange(0, indexKey.size()),
             indexKey.size(),
-            &index.entries[i],
-            (index.len - i)*sizeof(ListIndexEntry));
+            &index.entries[0],
+            (i + 1)*sizeof(ListIndexEntry));
 
         tx.commit();
       }
