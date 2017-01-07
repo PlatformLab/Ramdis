@@ -20,6 +20,13 @@
 extern "C" {
 #endif
   typedef struct {
+    void* client; // RAMCloud::RamCloud*
+    uint64_t tableId;
+    int err;
+    char errmsg[256];
+  } Context;
+
+  typedef struct {
     void* data;
     uint32_t len;
   } Object;
@@ -30,22 +37,22 @@ extern "C" {
   } ObjectArray;
 
   void printObjectArray(ObjectArray* objArray);
-  void* connect(char* locator);
-  void disconnect(void* context);
+  Context* connect(char* locator);
+  void disconnect(Context* c);
   void freeObject(Object* obj);
   void freeObjectArray(ObjectArray* objArray);
-  char* ping(void* context, char* msg);
-  void set(void* context, Object* key, Object* value);
-  Object* get(void* context, Object* key);
-  long incr(void* context, Object* key);
-  uint64_t lpush(void* context, Object* key, Object* value);
-  uint64_t rpush(void* context, Object* key, Object* value);
-  Object* lpop(void* context, Object* key);
-  Object* rpop(void* context, Object* key);
-  uint64_t sadd(void* context, Object* key, ObjectArray* valuesArray);
-  Object* spop(void* context, Object* key);
-  ObjectArray* lrange(void* context, Object* key, long start, long end);
-  void mset(void* context, ObjectArray* keysArray, ObjectArray* valuesArray);
+  char* ping(Context* c, char* msg);
+  void set(Context* c, Object* key, Object* value);
+  Object* get(Context* c, Object* key);
+  long incr(Context* c, Object* key);
+  uint64_t lpush(Context* c, Object* key, Object* value);
+  uint64_t rpush(Context* c, Object* key, Object* value);
+  Object* lpop(Context* c, Object* key);
+  Object* rpop(Context* c, Object* key);
+  uint64_t sadd(Context* c, Object* key, ObjectArray* valuesArray);
+  Object* spop(Context* c, Object* key);
+  ObjectArray* lrange(Context* c, Object* key, long start, long end);
+  void mset(Context* c, ObjectArray* keysArray, ObjectArray* valuesArray);
 #ifdef __cplusplus
 }
 #endif

@@ -20,13 +20,6 @@
  * (?)
  */
 
-struct Context {
-  RAMCloud::RamCloud* client;
-  uint64_t tableId;
-  int err;
-  char errmsg[256];
-};
-
 struct ListIndexEntry {
   int16_t segId;
   uint16_t elemCount;
@@ -77,19 +70,19 @@ void serverLog(int level, const char *fmt, ...) {
   printf(pmsg);
 }
 
-void* connect(char* locator) {
+Context* connect(char* locator) {
   Context* c = new Context();
-  c->client = new RAMCloud::RamCloud(locator);
-  c->tableId = c->client->createTable("default");
+  RAMCloud::RamCloud* client = new RAMCloud::RamCloud(locator);
+  c->client = (void*)client;
+  c->tableId = client->createTable("default");
   c->err = 0;
   memset(c->errmsg, '\0', sizeof(c->errmsg));
-  return (void*)c;
+  return c;
 }
 
-void disconnect(void* context) {
-  Context* c = (Context*)context;
-
-  delete c->client;
+void disconnect(Context* c) {
+  RAMCloud::RamCloud* client = (RAMCloud::RamCloud*)c->client;
+  delete client;
   delete c;
 }
 
@@ -106,20 +99,20 @@ void freeObjectArray(ObjectArray* objArray) {
   free(objArray);
 }
 
-char* ping(void* context, char* msg) {
+char* ping(Context* c, char* msg) {
   return NULL;
 }
 
-void set(void* context, Object* key, Object* value) {
-  Context* c = (Context*)context;
-  c->client->write(c->tableId, key->data, key->len, value->data, value->len);
+void set(Context* c, Object* key, Object* value) {
+  RAMCloud::RamCloud* client = (RAMCloud::RamCloud*)c->client;
+  client->write(c->tableId, key->data, key->len, value->data, value->len);
 }
 
-Object* get(void* context, Object* key) {
-  Context* c = (Context*)context;
+Object* get(Context* c, Object* key) {
+  RAMCloud::RamCloud* client = (RAMCloud::RamCloud*)c->client;
   RAMCloud::Buffer buffer;
   try {
-    c->client->read(c->tableId, key->data, key->len, &buffer);
+    client->read(c->tableId, key->data, key->len, &buffer);
     Object* value = (Object*)malloc(sizeof(Object));
     value->data = (void*)malloc(buffer.size());
     value->len = buffer.size();
@@ -134,10 +127,10 @@ Object* get(void* context, Object* key) {
   }
 }
 
-long incr(void* context, Object* key) {
-  Context* c = (Context*)context;
+long incr(Context* c, Object* key) {
+  RAMCloud::RamCloud* client = (RAMCloud::RamCloud*)c->client;
   try {
-    uint64_t newValue = c->client->incrementInt64(c->tableId, 
+    uint64_t newValue = client->incrementInt64(c->tableId, 
         key->data,
         key->len,
         1);
@@ -158,9 +151,9 @@ void makeKey(RAMCloud::Buffer* buf, char* key, uint16_t keyLen, char* suffix,
   buf->append(suffix, suffixLen);
 }
 
-uint64_t lpush(void* context, Object* key, Object* value) {
-  Context* c = (Context*)context;
-  RAMCloud::Transaction tx(c->client);
+uint64_t lpush(Context* c, Object* key, Object* value) {
+  RAMCloud::RamCloud* client = (RAMCloud::RamCloud*)c->client;
+  RAMCloud::Transaction tx(client);
 
   /* Construct RAMCloud key for the list index. */ 
   RAMCloud::Buffer indexKey;
@@ -300,9 +293,9 @@ uint64_t lpush(void* context, Object* key, Object* value) {
   return totalElements + 1;
 }
 
-uint64_t rpush(void* context, Object* key, Object* value) {
-  Context* c = (Context*)context;
-  RAMCloud::Transaction tx(c->client);
+uint64_t rpush(Context* c, Object* key, Object* value) {
+  RAMCloud::RamCloud* client = (RAMCloud::RamCloud*)c->client;
+  RAMCloud::Transaction tx(client);
 
   /* Construct RAMCloud key for the list index. */ 
   RAMCloud::Buffer indexKey;
@@ -444,9 +437,9 @@ uint64_t rpush(void* context, Object* key, Object* value) {
   return totalElements + 1;
 }
 
-Object* lpop(void* context, Object* key) {
-  Context* c = (Context*)context;
-  RAMCloud::Transaction tx(c->client);
+Object* lpop(Context* c, Object* key) {
+  RAMCloud::RamCloud* client = (RAMCloud::RamCloud*)c->client;
+  RAMCloud::Transaction tx(client);
 
   /* Construct RAMCloud key for the list index. */ 
   RAMCloud::Buffer indexKey;
@@ -615,9 +608,9 @@ Object* lpop(void* context, Object* key) {
   }
 }
 
-Object* rpop(void* context, Object* key) {
-  Context* c = (Context*)context;
-  RAMCloud::Transaction tx(c->client);
+Object* rpop(Context* c, Object* key) {
+  RAMCloud::RamCloud* client = (RAMCloud::RamCloud*)c->client;
+  RAMCloud::Transaction tx(client);
 
   /* Construct RAMCloud key for the list index. */ 
   RAMCloud::Buffer indexKey;
@@ -788,17 +781,17 @@ Object* rpop(void* context, Object* key) {
   }
 }
 
-uint64_t sadd(void* context, Object* key, ObjectArray* values) {
+uint64_t sadd(Context* c, Object* key, ObjectArray* values) {
   return 0;
 }
 
-Object* spop(void* context, Object* key) {
+Object* spop(Context* c, Object* key) {
   return NULL;
 }
 
-ObjectArray* lrange(void* context, Object* key, long start, long end) {
-  Context* c = (Context*)context;
-  RAMCloud::Transaction tx(c->client);
+ObjectArray* lrange(Context* c, Object* key, long start, long end) {
+  RAMCloud::RamCloud* client = (RAMCloud::RamCloud*)c->client;
+  RAMCloud::Transaction tx(client);
 
   /* Construct RAMCloud key for the list index. */ 
   RAMCloud::Buffer indexKey;
@@ -961,7 +954,7 @@ ObjectArray* lrange(void* context, Object* key, long start, long end) {
   }
 }
 
-void mset(void* context, ObjectArray* keysArray, Object* valuesArray) {
+void mset(Context* c, ObjectArray* keysArray, Object* valuesArray) {
 
 }
 
