@@ -257,11 +257,18 @@ uint64_t lpush(Context* c, Object* key, Object* value) {
     makeKey(&segKey, (char*)key->data, key->len, suffix, strlen(suffix) + 1);
 
     RAMCloud::Buffer segValue;
-    tx.read(c->tableId,
-        segKey.getRange(0, segKey.size()), 
-        segKey.size(), 
-        &segValue);
-    
+    try {
+      tx.read(c->tableId,
+          segKey.getRange(0, segKey.size()), 
+          segKey.size(), 
+          &segValue);
+    } catch (RAMCloud::ObjectDoesntExistException& e) {
+      c->err = -1;
+      snprintf(c->errmsg, sizeof(c->errmsg), 
+          "List is corrupted.");
+      return 0;
+    }
+
     uint16_t valueLen = (uint16_t)value->len;
     newSegValue.append((void*)&valueLen, sizeof(uint16_t));
     newSegValue.append(&segValue, 0, 
@@ -400,10 +407,17 @@ uint64_t rpush(Context* c, Object* key, Object* value) {
     makeKey(&segKey, (char*)key->data, key->len, suffix, strlen(suffix) + 1);
 
     RAMCloud::Buffer segValue;
-    tx.read(c->tableId,
-        segKey.getRange(0, segKey.size()), 
-        segKey.size(), 
-        &segValue);
+    try {
+      tx.read(c->tableId,
+          segKey.getRange(0, segKey.size()), 
+          segKey.size(), 
+          &segValue);
+    } catch (RAMCloud::ObjectDoesntExistException& e) {
+      c->err = -1;
+      snprintf(c->errmsg, sizeof(c->errmsg), 
+          "List is corrupted.");
+      return 0;
+    }
 
     uint16_t valueLen = (uint16_t)value->len;
     newSegValue.append(&segValue, 0, 
@@ -523,10 +537,17 @@ Object* lpop(Context* c, Object* key) {
       makeKey(&segKey, (char*)key->data, key->len, suffix, strlen(suffix) + 1);
 
       RAMCloud::Buffer segValue;
-      tx.read(c->tableId,
-          segKey.getRange(0, segKey.size()), 
-          segKey.size(), 
-          &segValue);
+      try {
+        tx.read(c->tableId,
+            segKey.getRange(0, segKey.size()), 
+            segKey.size(), 
+            &segValue);
+      } catch (RAMCloud::ObjectDoesntExistException& e) {
+        c->err = -1;
+        snprintf(c->errmsg, sizeof(c->errmsg), 
+            "List is corrupted.");
+        return 0;
+      }
 
       // Extract value from segment.
       uint16_t len = *static_cast<uint16_t*>(segValue.getRange(
@@ -695,10 +716,17 @@ Object* rpop(Context* c, Object* key) {
       makeKey(&segKey, (char*)key->data, key->len, suffix, strlen(suffix) + 1);
 
       RAMCloud::Buffer segValue;
-      tx.read(c->tableId,
-          segKey.getRange(0, segKey.size()), 
-          segKey.size(), 
-          &segValue);
+      try {
+        tx.read(c->tableId,
+            segKey.getRange(0, segKey.size()), 
+            segKey.size(), 
+            &segValue);
+      } catch (RAMCloud::ObjectDoesntExistException& e) {
+        c->err = -1;
+        snprintf(c->errmsg, sizeof(c->errmsg), 
+            "List is corrupted.");
+        return 0;
+      }
 
       // Extract value from segment.
       uint16_t len = *static_cast<uint16_t*>(segValue.getRange(
