@@ -20,7 +20,7 @@ void printObjectArray(ObjectArray* objArray) {
 int main(int argc, char* argv[]) {
   printf("Ramdis Client Test\n");
   printf("Connecting to %s\n", argv[1]);
-  void* context = connect(argv[1]); 
+  Context* context = connect(argv[1]); 
   
   {
     printf("\nTesting GET/SET\n");
@@ -139,6 +139,175 @@ int main(int argc, char* argv[]) {
     obj = rpop(context, &key);
     printf("rpop: %s\n", (char*)(obj->data));
     freeObject(obj);
+  }
+
+  {
+    printf("\nTesting l/rpush, l/rpop, and lrange at large scale\n");
+    /* Number of elements to put in the big list. */
+    uint64_t totalElements = (1<<13);
+    /* Size of each element in bytes. */
+    size_t elementSize = 8;
+
+    printf("LPUSH'ing %d %dB elements. Total size: %dB\n", 
+        totalElements,
+        elementSize,
+        totalElements * elementSize);
+
+    Object key;
+    key.data = "big list test";
+    key.len = strlen(key.data)+1;
+   
+    Object value;
+    char valBuf[elementSize];
+    value.data = (void*)valBuf;
+    value.len = elementSize;
+
+    int i;
+    uint64_t elems;
+    for (i = 0; i < totalElements; i++) {
+      sprintf(valBuf, "%07d", i);
+      elems = lpush(context, &key, &value);
+
+      if (context->err != 0) {
+        printf("Error: %s\n", context->errmsg);
+        return 0;
+      }
+
+      if (elems % 100000 == 0 && elems != 0) {
+        printf("elems: %d\n", elems);
+      }
+    }
+
+    printf("Elements LPUSH'd. Checking correctness... \n");
+
+    ObjectArray* objArray;
+    objArray = lrange(context, &key, 0, -1);
+
+    if (objArray->len != totalElements) {
+      printf("Error: Array length was wrong. Expected: %d, got: %d\n",
+          totalElements, objArray->len);
+      return 0;
+    }
+
+    for (i = 0; i < totalElements; i++) {
+      sprintf(valBuf, "%07d", totalElements - i - 1);
+      if (strcmp(objArray->array[i].data, valBuf) != 0) {
+        printf("Error: Element %d was not correct. Expected: %s, got: %s\n",
+            i,
+            valBuf,
+            objArray->array[i].data);
+        return 0;
+      }
+    }
+
+    freeObjectArray(objArray);
+
+    printf("Good.\n");
+
+    printf("Now RPOP'ing all the elements off the list... \n");
+
+    Object *obj;
+    for (i = 0; i < totalElements; i++) {
+      sprintf(valBuf, "%07d", i);
+      printf("popping element %d\n", i);
+      obj = rpop(context, &key);
+
+      if (context->err != 0) {
+        printf("Error: Popping element %d: %s\n", i, context->errmsg);
+        return 0;
+      }
+
+      if (obj == NULL) {
+        printf("Error: Returned element %d was null.\n", i);
+        return 0;
+      }
+
+      if(strcmp(obj->data, valBuf) != 0) {
+        printf("Error: Element %d was not correct. Expected: %s, got: %s\n",
+            i,
+            valBuf,
+            obj->data);
+        return 0;
+
+      }
+      freeObject(obj);
+    }
+
+    printf("Good.\n");
+
+    printf("RPUSH'ing %d %dB elements. Total size: %dB\n", 
+        totalElements,
+        elementSize,
+        totalElements * elementSize);
+
+    for (i = 0; i < totalElements; i++) {
+      sprintf(valBuf, "%07d", i);
+      elems = rpush(context, &key, &value);
+
+      if (context->err != 0) {
+        printf("Error: %s\n", context->errmsg);
+        return 0;
+      }
+
+      if (elems % 100000 == 0 && elems != 0) {
+        printf("elems: %d\n", elems);
+      }
+    }
+
+    printf("Elements RPUSH'd. Checking correctness... \n");
+
+    objArray = lrange(context, &key, 0, -1);
+
+    if (objArray->len != totalElements) {
+      printf("Error: Array length was wrong. Expected: %d, got: %d\n",
+          totalElements, objArray->len);
+      return 0;
+    }
+
+    for (i = 0; i < totalElements; i++) {
+      sprintf(valBuf, "%07d", i);
+      if (strcmp(objArray->array[i].data, valBuf) != 0) {
+        printf("Error: Element %d was not correct. Expected: %s, got: %s\n",
+            i,
+            valBuf,
+            objArray->array[i].data);
+        return 0;
+      }
+    }
+
+    freeObjectArray(objArray);
+
+    printf("Good.\n");
+
+    printf("Now LPOP'ing all the elements off the list... \n");
+
+    for (i = 0; i < totalElements; i++) {
+      sprintf(valBuf, "%07d", i);
+      printf("popping element %d\n", i);
+      obj = lpop(context, &key);
+
+      if (context->err != 0) {
+        printf("Error: Popping element %d: %s\n", i, context->errmsg);
+        return 0;
+      }
+
+      if (obj == NULL) {
+        printf("Error: Returned element %d was null.\n", i);
+        return 0;
+      }
+
+      if(strcmp(obj->data, valBuf) != 0) {
+        printf("Error: Element %d was not correct. Expected: %s, got: %s\n",
+            i,
+            valBuf,
+            obj->data);
+        return 0;
+
+      }
+      freeObject(obj);
+    }
+
+    printf("Good.\n");
   }
 
   disconnect(context);
