@@ -143,8 +143,8 @@ long incr(Context* c, Object* key) {
   }
 }
 
-void makeKey(RAMCloud::Buffer* buf, char* key, uint16_t keyLen, char* suffix,
-    uint8_t suffixLen) {
+void makeKey(RAMCloud::Buffer* buf, const char* key, uint16_t keyLen, 
+    const char* suffix, uint8_t suffixLen) {
   buf->append((void*)&keyLen, sizeof(uint16_t));
   buf->append(key, keyLen);
   buf->append((void*)&suffixLen, sizeof(uint8_t));
