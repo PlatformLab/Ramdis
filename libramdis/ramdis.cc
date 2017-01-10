@@ -194,7 +194,7 @@ uint64_t lpush(Context* c, Object* key, Object* value) {
   if (!listExists || indexValue.size() == 0 || headSegFull) {
     /* If the list doesn't exist, or the index is empty, or the head segment is
      * full, then create a new head segment. */
-    uint16_t newSegId;
+    int16_t newSegId;
     if (!listExists || indexValue.size() == 0) {
       newSegId = 0;
     } else {
@@ -355,7 +355,7 @@ uint64_t rpush(Context* c, Object* key, Object* value) {
   if (!listExists || indexValue.size() == 0 || tailSegFull) {
     /* If the list doesn't exist, or the index is empty, or the tail segment is
      * full, then create a new head segment. */
-    uint16_t newSegId;
+    int16_t newSegId;
     if (!listExists || indexValue.size() == 0) {
       newSegId = 0;
     } else {
