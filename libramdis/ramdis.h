@@ -17,37 +17,37 @@
 #endif
 
 #if VERBOSITY>=LL_FATAL
-#define FATAL(...) printf("FATAL: " __VA_ARGS__)
+#define FATAL(fmt, ...) printf("%s:%d:%s(): FATAL: " fmt, __FILE__, __LINE__, __func__, ##__VA_ARGS__)
 #else
 #define FATAL(...)
 #endif
 
 #if VERBOSITY>=LL_ERROR
-#define ERROR(...) printf("ERROR: " __VA_ARGS__)
+#define ERROR(fmt, ...) printf("%s:%d:%s(): ERROR: " fmt, __FILE__, __LINE__, __func__, ##__VA_ARGS__)
 #else
 #define ERROR(...)
 #endif
 
 #if VERBOSITY>=LL_WARN
-#define WARN(...) printf("WARN: " __VA_ARGS__)
+#define WARN(fmt, ...) printf("%s:%d:%s(): WARN: " fmt, __FILE__, __LINE__, __func__, ##__VA_ARGS__)
 #else
 #define WARN(...)
 #endif
 
 #if VERBOSITY>=LL_INFO
-#define INFO(...) printf("INFO: " __VA_ARGS__)
+#define INFO(fmt, ...) printf("%s:%d:%s(): INFO: " fmt, __FILE__, __LINE__, __func__, ##__VA_ARGS__)
 #else
 #define INFO(...)
 #endif
 
 #if VERBOSITY>=LL_DEBUG
-#define DEBUG(...) printf("DEBUG: " __VA_ARGS__)
+#define DEBUG(fmt, ...) printf("%s:%d:%s(): DEBUG: " fmt, __FILE__, __LINE__, __func__, ##__VA_ARGS__)
 #else
 #define DEBUG(...)
 #endif
 
 #if VERBOSITY>=LL_TRACE
-#define TRACE(...) printf("TRACE: " __VA_ARGS__)
+#define TRACE(fmt, ...) printf("%s:%d:%s(): TRACE: " fmt, __FILE__, __LINE__, __func__, ##__VA_ARGS__)
 #else
 #define TRACE(...)
 #endif
