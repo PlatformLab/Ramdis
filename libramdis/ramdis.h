@@ -16,6 +16,42 @@
 #define VERBOSITY LL_INFO
 #endif
 
+#if VERBOSITY>=LL_FATAL
+#define FATAL(...) printf("FATAL: " __VA_ARGS__)
+#else
+#define FATAL(...)
+#endif
+
+#if VERBOSITY>=LL_ERROR
+#define ERROR(...) printf("ERROR: " __VA_ARGS__)
+#else
+#define ERROR(...)
+#endif
+
+#if VERBOSITY>=LL_WARN
+#define WARN(...) printf("WARN: " __VA_ARGS__)
+#else
+#define WARN(...)
+#endif
+
+#if VERBOSITY>=LL_INFO
+#define INFO(...) printf("INFO: " __VA_ARGS__)
+#else
+#define INFO(...)
+#endif
+
+#if VERBOSITY>=LL_DEBUG
+#define DEBUG(...) printf("DEBUG: " __VA_ARGS__)
+#else
+#define DEBUG(...)
+#endif
+
+#if VERBOSITY>=LL_TRACE
+#define TRACE(...) printf("TRACE: " __VA_ARGS__)
+#else
+#define TRACE(...)
+#endif
+
 #ifdef __cplusplus
 extern "C" {
 #endif
