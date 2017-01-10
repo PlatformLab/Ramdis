@@ -263,6 +263,18 @@ uint64_t lpush(Context* c, Object* key, Object* value) {
           segKey.size(), 
           &segValue);
     } catch (RAMCloud::ObjectDoesntExistException& e) {
+      ERROR("List is corrupted. This is a bug.\n");
+      DEBUG("List index entry %d shows segId %d having %d elements, but this segment does not exist.\n", 
+          0, 
+          index.entries[0].segId,
+          index.entries[0].elemCount);
+      for (int i = 0; i < index.len; i++) {
+        DEBUG("Index entry %5d: segId: %5d, elemCount: %5d, segSizeKb: %5dKb\n",
+            i,
+            index.entries[i].segId,
+            index.entries[i].elemCount,
+            index.entries[i].segSizeKb);
+      }
       c->err = -1;
       snprintf(c->errmsg, sizeof(c->errmsg), 
           "List is corrupted.");
@@ -413,6 +425,18 @@ uint64_t rpush(Context* c, Object* key, Object* value) {
           segKey.size(), 
           &segValue);
     } catch (RAMCloud::ObjectDoesntExistException& e) {
+      ERROR("List is corrupted. This is a bug.\n");
+      DEBUG("List index entry %d shows segId %d having %d elements, but this segment does not exist.\n", 
+          index.len - 1, 
+          index.entries[index.len - 1].segId,
+          index.entries[index.len - 1].elemCount);
+      for (int i = 0; i < index.len; i++) {
+        DEBUG("Index entry %5d: segId: %5d, elemCount: %5d, segSizeKb: %5dKb\n",
+            i,
+            index.entries[i].segId,
+            index.entries[i].elemCount,
+            index.entries[i].segSizeKb);
+      }
       c->err = -1;
       snprintf(c->errmsg, sizeof(c->errmsg), 
           "List is corrupted.");
