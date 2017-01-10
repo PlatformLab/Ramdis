@@ -29,16 +29,16 @@ $(CCTARGETS): $(CCOBJECTS)
 					$(CC) -o $@ $^ $(CCLDFLAGS)
 
 %.o: %.cc %.h
-	        $(CXX) $(CXXFLAGS) -c $<
+	        $(CXX) $(CXXFLAGS) -g -c $<
 
 %.o: %.cc
-	        $(CXX) $(CXXFLAGS) -c $<
+	        $(CXX) $(CXXFLAGS) -g -c $<
 
 %.o: %.c %.h
-	        $(CC) $(CCFLAGS) -c $<
+	        $(CC) $(CCFLAGS) -g -c $<
 
 %.o: %.c
-	        $(CC) $(CCFLAGS) -c $<
+	        $(CC) $(CCFLAGS) -g -c $<
 
 clean:
 	        rm -f *.o $(CXXTARGETS) $(CCTARGETS)
