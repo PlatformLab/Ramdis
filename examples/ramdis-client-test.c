@@ -21,7 +21,7 @@ int main(int argc, char* argv[]) {
   printf("Ramdis Client Test\n");
   printf("Connecting to %s\n", argv[1]);
   Context* context = connect(argv[1]); 
-  
+
   {
     printf("\nTesting GET/SET\n");
     Object key;
@@ -144,7 +144,7 @@ int main(int argc, char* argv[]) {
   {
     printf("\nTesting l/rpush, l/rpop, and lrange at large scale\n");
     /* Number of elements to put in the big list. */
-    uint64_t totalElements = (1<<13);
+    uint64_t totalElements = (1<<16);
     /* Size of each element in bytes. */
     size_t elementSize = 8;
 
@@ -209,7 +209,6 @@ int main(int argc, char* argv[]) {
     Object *obj;
     for (i = 0; i < totalElements; i++) {
       sprintf(valBuf, "%07d", i);
-      printf("popping element %d\n", i);
       obj = rpop(context, &key);
 
       if (context->err != 0) {
@@ -283,7 +282,6 @@ int main(int argc, char* argv[]) {
 
     for (i = 0; i < totalElements; i++) {
       sprintf(valBuf, "%07d", i);
-      printf("popping element %d\n", i);
       obj = lpop(context, &key);
 
       if (context->err != 0) {
