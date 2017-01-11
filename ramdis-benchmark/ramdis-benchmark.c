@@ -124,6 +124,8 @@ void* getWorkerThread(void* args) {
 
   wStats->latencies = latencies;
 
+  ramdis_disconnect(context);
+
   return wStats;
 }
 
@@ -165,6 +167,8 @@ void* setWorkerThread(void* args) {
 
   wStats->latencies = latencies;
 
+  ramdis_disconnect(context);
+
   return wStats;
 }
 
@@ -199,6 +203,8 @@ void* incrWorkerThread(void* args) {
   uint64_t testEnd = ustime(); 
 
   wStats->latencies = latencies;
+
+  ramdis_disconnect(context);
 
   return wStats;
 }
