@@ -343,5 +343,7 @@ int main(int argc, char* argv[]) {
     test = strtok(NULL, ",");
   }
 
+  ramdis_disconnect(context);
+
   return 0;
 }
