@@ -73,8 +73,8 @@ extern "C" {
   } ObjectArray;
 
   void printObjectArray(ObjectArray* objArray);
-  Context* connect(char* locator);
-  void disconnect(Context* c);
+  Context* ramdis_connect(char* locator);
+  void ramdis_disconnect(Context* c);
   void freeObject(Object* obj);
   void freeObjectArray(ObjectArray* objArray);
   char* ping(Context* c, char* msg);
