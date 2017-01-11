@@ -14,7 +14,7 @@ VERBOSITY ?= 3 # LL_INFO
 RAMCLOUD_SRC := $(HOME)/RAMCloud/src
 RAMCLOUD_LIB := $(HOME)/RAMCloud/obj.master
 RC_CLIENT_INCLUDES := -I$(RAMCLOUD_SRC) -I$(RAMCLOUD_LIB)
-RC_CLIENT_LIBDEPS := -L$(RAMCLOUD_LIB) -L./PerfUtils -lramcloud -lpcrecpp -lboost_program_options -lprotobuf -lrt -lboost_filesystem -lboost_system -lpthread -lssl -lcrypto -lPerfUtils
+RC_CLIENT_LIBDEPS := -L$(RAMCLOUD_LIB) -L../PerfUtils -lramcloud -lpcrecpp -lboost_program_options -lprotobuf -lrt -lboost_filesystem -lboost_system -lpthread -lssl -lcrypto -lPerfUtils
 
 # Includes and library dependencies of docopt
 CFLAGS := $(RC_CLIENT_INCLUDES) -DVERBOSITY=$(VERBOSITY)

@@ -1,3 +1,6 @@
 [submodule "docopt"]
 	path = docopt.cpp
 	url = git@github.com:docopt/docopt.cpp.git
+[submodule "PerfUtils"]
+	path = PerfUtils
+	url = git@github.com:PlatformLab/PerfUtils.git

@@ -7,7 +7,7 @@
 #include "RamCloud.h"
 #include "Transaction.h"
 #include "ClientException.h"
-#include "PerfUtils/TimeTrace.h"
+#include "../PerfUtils/TimeTrace.h"
 
 /* TODO:
  * [ ] Argument checking.
