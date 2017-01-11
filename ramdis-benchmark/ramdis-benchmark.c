@@ -205,7 +205,7 @@ int main(int argc, char* argv[]) {
 
         set(context, &key, &value);
       }
-    } else if (strcmp(test, "set") == 1) {
+    } else if (strcmp(test, "set") == 0) {
     } else if (strcmp(test, "incr") == 0) {
     } else if (strcmp(test, "lpush") == 0) {
     } else if (strcmp(test, "rpush") == 0) {
