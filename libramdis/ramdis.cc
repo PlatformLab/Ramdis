@@ -153,9 +153,6 @@ void makeKey(RAMCloud::Buffer* buf, const char* key, uint16_t keyLen,
 }
 
 uint64_t lpush(Context* c, Object* key, Object* value) {
-  PerfUtils::TimeTrace::reset();
-  PerfUtils::TimeTrace::record("Begin lpush");
-
   RAMCloud::RamCloud* client = (RAMCloud::RamCloud*)c->client;
   RAMCloud::Transaction tx(client);
 
@@ -166,7 +163,6 @@ uint64_t lpush(Context* c, Object* key, Object* value) {
   /* Read the index. */
   RAMCloud::Buffer indexValue;
   bool listExists = true;
-  PerfUtils::TimeTrace::record("Read index");
   try {
     tx.read(c->tableId, 
         indexKey.getRange(0, indexKey.size()), 
@@ -175,7 +171,6 @@ uint64_t lpush(Context* c, Object* key, Object* value) {
   } catch (RAMCloud::ObjectDoesntExistException& e) {
     listExists = false;
   }
-  PerfUtils::TimeTrace::record("Index read");
 
   ListIndex index;
   bool headSegFull = false;
@@ -194,7 +189,6 @@ uint64_t lpush(Context* c, Object* key, Object* value) {
     }
   }
 
-  PerfUtils::TimeTrace::record("Index analyzed");
 
   RAMCloud::Buffer segKey;
   RAMCloud::Buffer newSegValue;
@@ -239,8 +233,6 @@ uint64_t lpush(Context* c, Object* key, Object* value) {
     if (listExists && indexValue.size() != 0) {
       newIndexValue.append(&indexValue);
     }
-
-    PerfUtils::TimeTrace::record("Created new head segment");
   } else if (index.entries[0].elemCount == 0) {
     /* The list exists, the index is not empty, but the head segment is empty.
      * In this case we don't need to read the head segment to add the new
@@ -258,8 +250,6 @@ uint64_t lpush(Context* c, Object* key, Object* value) {
     index.entries[0].segSizeKb = (uint8_t)(newSegValue.size() >> 10);
 
     newIndexValue.append(index.entries, index.len*sizeof(ListIndexEntry));
-    
-    PerfUtils::TimeTrace::record("Wrote new head segment");
   } else {
     /* The list exists, the index is not empty, and the head segment is neither
      * full nor totally empty. In this case we need to read the head segment
@@ -292,7 +282,6 @@ uint64_t lpush(Context* c, Object* key, Object* value) {
           "List is corrupted.");
       return 0;
     }
-    PerfUtils::TimeTrace::record("Read head segment");
 
     uint16_t valueLen = (uint16_t)value->len;
     newSegValue.append((void*)&valueLen, sizeof(uint16_t));
@@ -306,8 +295,6 @@ uint64_t lpush(Context* c, Object* key, Object* value) {
     index.entries[0].segSizeKb = (uint8_t)(newSegValue.size() >> 10);
 
     newIndexValue.append(index.entries, index.len*sizeof(ListIndexEntry));
-
-    PerfUtils::TimeTrace::record("Added element to head segment");
   }
 
   tx.write(c->tableId,
@@ -323,12 +310,6 @@ uint64_t lpush(Context* c, Object* key, Object* value) {
       newIndexValue.size());
 
   tx.commit();
-
-  PerfUtils::TimeTrace::record("Committed transaction");
-
-  PerfUtils::TimeTrace::print();
-
-  printf("\n");
 
   return totalElements + 1;
 }
