@@ -127,6 +127,47 @@ void* getWorkerThread(void* args) {
   return wStats;
 }
 
+/* Worker thread for executing set command. */
+void* setWorkerThread(void* args) {
+  struct WorkerArgs* wArgs = (struct WorkerArgs*)args;
+  char* coordinatorLocator = wArgs->coordinatorLocator;
+  uint64_t requests = wArgs->requests;
+  uint64_t valueSize = wArgs->valueSize;
+  uint64_t keySpaceLength = wArgs->keySpaceLength;
+
+  Context* context = ramdis_connect(coordinatorLocator);
+
+  struct WorkerStats* wStats = (struct WorkerStats*)malloc(sizeof(struct
+        WorkerStats)); 
+
+  uint64_t* latencies = (uint64_t*)malloc(requests*sizeof(uint64_t));
+
+  /* Value to write for set commands. */
+  Object value;
+  char valBuf[valueSize];
+  value.data = valBuf;
+  value.len = valueSize;
+
+  int i;
+  Object key;
+  char keyBuf[16];
+  key.len = sizeof(keyBuf);
+  uint64_t testStart = ustime();
+  for (i = 0; i < requests; i++) {
+    snprintf(keyBuf, 16, "%015d", rand() % keySpaceLength);
+    key.data = keyBuf;
+
+    uint64_t reqStart = ustime();
+    set(context, &key, &value);
+    latencies[i] = ustime() - reqStart;
+  }
+  uint64_t testEnd = ustime(); 
+
+  wStats->latencies = latencies;
+
+  return wStats;
+}
+
 int main(int argc, char* argv[]) {
   char* coordinatorLocator;
   uint64_t clients = 1;
@@ -206,6 +247,7 @@ int main(int argc, char* argv[]) {
         set(context, &key, &value);
       }
     } else if (strcmp(test, "set") == 0) {
+      workerThreadFuncPtr = setWorkerThread;
     } else if (strcmp(test, "incr") == 0) {
     } else if (strcmp(test, "lpush") == 0) {
     } else if (strcmp(test, "rpush") == 0) {
