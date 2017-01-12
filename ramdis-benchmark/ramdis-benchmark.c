@@ -25,6 +25,8 @@ const char USAGE[] =
 "                      [default: 100000]\n"
 "  -d <size>           Size in bytes of value to read/write in \n"
 "                      GET/SET/PUSH/POP/SADD/SPOP, etc. [default: 3]\n"
+"  -l <lrange>         Get elements [0,lrange] for LRANGE command \n"
+"                      [default: 100]\n"
 "  -r <keyspacelen>    Execute operations on a random set of keys in the\n"
 "                      space from [0,keyspacelen) [default: 1]\n"
 "  -t <tests>          Comma separated list of tests to run. Available \n"
@@ -54,6 +56,7 @@ struct WorkerArgs {
   char* coordinatorLocator;
   uint64_t requests;
   uint64_t valueSize;
+  uint64_t lrangeSize;
   uint64_t keySpaceLength;
 };
 
@@ -369,11 +372,51 @@ void* rpopWorkerThread(void* args) {
   return wStats;
 }
 
+/* Worker thread for executing lrange command. */
+void* lrangeWorkerThread(void* args) {
+  struct WorkerArgs* wArgs = (struct WorkerArgs*)args;
+  char* coordinatorLocator = wArgs->coordinatorLocator;
+  uint64_t requests = wArgs->requests;
+  uint64_t valueSize = wArgs->valueSize;
+  uint64_t lrangeSize = wArgs->lrangeSize;
+  uint64_t keySpaceLength = wArgs->keySpaceLength;
+
+  Context* context = ramdis_connect(coordinatorLocator);
+
+  struct WorkerStats* wStats = (struct WorkerStats*)malloc(sizeof(struct
+        WorkerStats)); 
+
+  uint64_t* latencies = (uint64_t*)malloc(requests*sizeof(uint64_t));
+
+  int i;
+  Object key;
+  char keyBuf[16];
+  key.len = sizeof(keyBuf);
+  uint64_t testStart = ustime();
+  for (i = 0; i < requests; i++) {
+    snprintf(keyBuf, 16, "%015d", rand() % keySpaceLength);
+    key.data = keyBuf;
+
+    uint64_t reqStart = ustime();
+    ObjectArray* objArray = lrange(context, &key, 0, lrangeSize);
+    latencies[i] = ustime() - reqStart;
+    freeObjectArray(objArray);
+  }
+  uint64_t testEnd = ustime(); 
+
+  wStats->latencies = latencies;
+
+  ramdis_disconnect(context);
+
+  return wStats;
+}
+
 int main(int argc, char* argv[]) {
   char* coordinatorLocator;
   uint64_t clients = 1;
   uint64_t requests = 100000;
   uint64_t valueSize = 3;
+  uint64_t lrangeSize = 100;
   uint64_t keySpaceLength = 1;
   char* tests = "all";
 
@@ -391,6 +434,9 @@ int main(int argc, char* argv[]) {
       i+=2;
     } else if (strcmp(argv[i], "-d") == 0) {
       valueSize = strtoul(argv[i+1], NULL, 10);
+      i+=2;
+    } else if (strcmp(argv[i], "-l") == 0) {
+      lrangeSize = strtoul(argv[i+1], NULL, 10);
       i+=2;
     } else if (strcmp(argv[i], "-r") == 0) {
       keySpaceLength = strtoul(argv[i+1], NULL, 10);
@@ -418,6 +464,7 @@ int main(int argc, char* argv[]) {
   wArgs.coordinatorLocator = coordinatorLocator;
   wArgs.requests = requests;
   wArgs.valueSize = valueSize;
+  wArgs.lrangeSize = lrangeSize;
   wArgs.keySpaceLength = keySpaceLength;
 
   char* test;
@@ -526,6 +573,28 @@ int main(int argc, char* argv[]) {
       printf("Test not yet implemented: %s\n", test);
       return -1;
     } else if (strcmp(test, "lrange") == 0) {
+      workerThreadFuncPtr = lrangeWorkerThread;
+
+      /* Do pre-workload setup. */
+
+      Object value;
+      char valBuf[valueSize];
+      value.data = valBuf;
+      value.len = valueSize;
+
+      Object key;
+      char keyBuf[16];
+      key.len = 16;
+      // Pre-push the list elements to perform the pops.
+      for (i = 0; i < keySpaceLength; i++) {
+        snprintf(keyBuf, 16, "%015" PRId64, i);
+        key.data = keyBuf;
+        
+        uint64_t j;
+        for (j = 0; j < 10000; j++) {
+          lpush(context, &key, &value);
+        }
+      }
     } else if (strcmp(test, "mset") == 0) {
     } else {
       printf("Unrecognized test: %s\n", test);
