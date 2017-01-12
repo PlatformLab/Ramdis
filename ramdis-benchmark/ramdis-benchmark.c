@@ -295,6 +295,80 @@ void* rpushWorkerThread(void* args) {
   return wStats;
 }
 
+/* Worker thread for executing lpop command. */
+void* lpopWorkerThread(void* args) {
+  struct WorkerArgs* wArgs = (struct WorkerArgs*)args;
+  char* coordinatorLocator = wArgs->coordinatorLocator;
+  uint64_t requests = wArgs->requests;
+  uint64_t valueSize = wArgs->valueSize;
+  uint64_t keySpaceLength = wArgs->keySpaceLength;
+
+  Context* context = ramdis_connect(coordinatorLocator);
+
+  struct WorkerStats* wStats = (struct WorkerStats*)malloc(sizeof(struct
+        WorkerStats)); 
+
+  uint64_t* latencies = (uint64_t*)malloc(requests*sizeof(uint64_t));
+
+  int i;
+  Object key;
+  char keyBuf[16];
+  key.len = sizeof(keyBuf);
+  uint64_t testStart = ustime();
+  for (i = 0; i < requests; i++) {
+    snprintf(keyBuf, 16, "%015d", rand() % keySpaceLength);
+    key.data = keyBuf;
+
+    uint64_t reqStart = ustime();
+    lpop(context, &key);
+    latencies[i] = ustime() - reqStart;
+  }
+  uint64_t testEnd = ustime(); 
+
+  wStats->latencies = latencies;
+
+  ramdis_disconnect(context);
+
+  return wStats;
+}
+
+/* Worker thread for executing rpop command. */
+void* rpopWorkerThread(void* args) {
+  struct WorkerArgs* wArgs = (struct WorkerArgs*)args;
+  char* coordinatorLocator = wArgs->coordinatorLocator;
+  uint64_t requests = wArgs->requests;
+  uint64_t valueSize = wArgs->valueSize;
+  uint64_t keySpaceLength = wArgs->keySpaceLength;
+
+  Context* context = ramdis_connect(coordinatorLocator);
+
+  struct WorkerStats* wStats = (struct WorkerStats*)malloc(sizeof(struct
+        WorkerStats)); 
+
+  uint64_t* latencies = (uint64_t*)malloc(requests*sizeof(uint64_t));
+
+  int i;
+  Object key;
+  char keyBuf[16];
+  key.len = sizeof(keyBuf);
+  uint64_t testStart = ustime();
+  for (i = 0; i < requests; i++) {
+    snprintf(keyBuf, 16, "%015d", rand() % keySpaceLength);
+    key.data = keyBuf;
+
+    uint64_t reqStart = ustime();
+    rpop(context, &key);
+    latencies[i] = ustime() - reqStart;
+  }
+  uint64_t testEnd = ustime(); 
+
+  wStats->latencies = latencies;
+
+  ramdis_disconnect(context);
+
+  return wStats;
+}
+
 int main(int argc, char* argv[]) {
   char* coordinatorLocator;
   uint64_t clients = 1;
@@ -400,7 +474,51 @@ int main(int argc, char* argv[]) {
     } else if (strcmp(test, "rpush") == 0) {
       workerThreadFuncPtr = rpushWorkerThread;
     } else if (strcmp(test, "lpop") == 0) {
+      workerThreadFuncPtr = lpopWorkerThread;
+
+      /* Do pre-workload setup. */
+
+      Object value;
+      char valBuf[valueSize];
+      value.data = valBuf;
+      value.len = valueSize;
+
+      Object key;
+      char keyBuf[16];
+      key.len = 16;
+      // Pre-push the list elements to perform the pops.
+      for (i = 0; i < keySpaceLength; i++) {
+        snprintf(keyBuf, 16, "%015" PRId64, i);
+        key.data = keyBuf;
+        
+        uint64_t j;
+        for (j = 0; j < (requests / keySpaceLength); j++) {
+          lpush(context, &key, &value);
+        }
+      }
     } else if (strcmp(test, "rpop") == 0) {
+      workerThreadFuncPtr = rpopWorkerThread;
+
+      /* Do pre-workload setup. */
+
+      Object value;
+      char valBuf[valueSize];
+      value.data = valBuf;
+      value.len = valueSize;
+
+      Object key;
+      char keyBuf[16];
+      key.len = 16;
+      // Pre-push the list elements to perform the pops.
+      for (i = 0; i < keySpaceLength; i++) {
+        snprintf(keyBuf, 16, "%015" PRId64, i);
+        key.data = keyBuf;
+        
+        uint64_t j;
+        for (j = 0; j < (requests / keySpaceLength); j++) {
+          lpush(context, &key, &value);
+        }
+      }
     } else if (strcmp(test, "sadd") == 0) {
     } else if (strcmp(test, "spop") == 0) {
     } else if (strcmp(test, "lrange") == 0) {
