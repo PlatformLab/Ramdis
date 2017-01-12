@@ -121,6 +121,7 @@ void* getWorkerThread(void* args) {
   Object key;
   char keyBuf[16];
   key.len = sizeof(keyBuf);
+  uint64_t progressUnit = (requests/100) > 0 ? (requests/100) : 1;
   uint64_t testStart = ustime();
   for (i = 0; i < requests; i++) {
     snprintf(keyBuf, 16, "%015d", rand() % keySpaceLength);
@@ -131,7 +132,7 @@ void* getWorkerThread(void* args) {
     latencies[i] = ustime() - reqStart;
     freeObject(value);
 
-    if (i % (requests/100) == 0) {
+    if (i % progressUnit == 0) {
       printf("Progress: %3d%%\r", i*100/requests);
       fflush(stdout);
     }
@@ -170,6 +171,7 @@ void* setWorkerThread(void* args) {
   Object key;
   char keyBuf[16];
   key.len = sizeof(keyBuf);
+  uint64_t progressUnit = (requests/100) > 0 ? (requests/100) : 1;
   uint64_t testStart = ustime();
   for (i = 0; i < requests; i++) {
     snprintf(keyBuf, 16, "%015d", rand() % keySpaceLength);
@@ -179,7 +181,7 @@ void* setWorkerThread(void* args) {
     set(context, &key, &value);
     latencies[i] = ustime() - reqStart;
 
-    if (i % (requests/100) == 0) {
+    if (i % progressUnit == 0) {
       printf("Progress: %3d%%\r", i*100/requests);
       fflush(stdout);
     }
@@ -212,6 +214,7 @@ void* incrWorkerThread(void* args) {
   Object key;
   char keyBuf[16];
   key.len = sizeof(keyBuf);
+  uint64_t progressUnit = (requests/100) > 0 ? (requests/100) : 1;
   uint64_t testStart = ustime();
   for (i = 0; i < requests; i++) {
     snprintf(keyBuf, 16, "%015d", rand() % keySpaceLength);
@@ -221,7 +224,7 @@ void* incrWorkerThread(void* args) {
     incr(context, &key);
     latencies[i] = ustime() - reqStart;
 
-    if (i % (requests/100) == 0) {
+    if (i % progressUnit == 0) {
       printf("Progress: %3d%%\r", i*100/requests);
       fflush(stdout);
     }
@@ -260,6 +263,7 @@ void* lpushWorkerThread(void* args) {
   Object key;
   char keyBuf[16];
   key.len = sizeof(keyBuf);
+  uint64_t progressUnit = (requests/100) > 0 ? (requests/100) : 1;
   uint64_t testStart = ustime();
   for (i = 0; i < requests; i++) {
     snprintf(keyBuf, 16, "%015d", rand() % keySpaceLength);
@@ -269,7 +273,7 @@ void* lpushWorkerThread(void* args) {
     lpush(context, &key, &value);
     latencies[i] = ustime() - reqStart;
 
-    if (i % (requests/100) == 0) {
+    if (i % progressUnit == 0) {
       printf("Progress: %3d%%\r", i*100/requests);
       fflush(stdout);
     }
@@ -308,6 +312,7 @@ void* rpushWorkerThread(void* args) {
   Object key;
   char keyBuf[16];
   key.len = sizeof(keyBuf);
+  uint64_t progressUnit = (requests/100) > 0 ? (requests/100) : 1;
   uint64_t testStart = ustime();
   for (i = 0; i < requests; i++) {
     snprintf(keyBuf, 16, "%015d", rand() % keySpaceLength);
@@ -317,7 +322,7 @@ void* rpushWorkerThread(void* args) {
     rpush(context, &key, &value);
     latencies[i] = ustime() - reqStart;
 
-    if (i % (requests/100) == 0) {
+    if (i % progressUnit == 0) {
       printf("Progress: %3d%%\r", i*100/requests);
       fflush(stdout);
     }
@@ -350,6 +355,7 @@ void* lpopWorkerThread(void* args) {
   Object key;
   char keyBuf[16];
   key.len = sizeof(keyBuf);
+  uint64_t progressUnit = (requests/100) > 0 ? (requests/100) : 1;
   uint64_t testStart = ustime();
   for (i = 0; i < requests; i++) {
     snprintf(keyBuf, 16, "%015d", rand() % keySpaceLength);
@@ -359,7 +365,7 @@ void* lpopWorkerThread(void* args) {
     lpop(context, &key);
     latencies[i] = ustime() - reqStart;
 
-    if (i % (requests/100) == 0) {
+    if (i % progressUnit == 0) {
       printf("Progress: %3d%%\r", i*100/requests);
       fflush(stdout);
     }
@@ -392,6 +398,7 @@ void* rpopWorkerThread(void* args) {
   Object key;
   char keyBuf[16];
   key.len = sizeof(keyBuf);
+  uint64_t progressUnit = (requests/100) > 0 ? (requests/100) : 1;
   uint64_t testStart = ustime();
   for (i = 0; i < requests; i++) {
     snprintf(keyBuf, 16, "%015d", rand() % keySpaceLength);
@@ -401,7 +408,7 @@ void* rpopWorkerThread(void* args) {
     rpop(context, &key);
     latencies[i] = ustime() - reqStart;
 
-    if (i % (requests/100) == 0) {
+    if (i % progressUnit == 0) {
       printf("Progress: %3d%%\r", i*100/requests);
       fflush(stdout);
     }
@@ -435,6 +442,7 @@ void* lrangeWorkerThread(void* args) {
   Object key;
   char keyBuf[16];
   key.len = sizeof(keyBuf);
+  uint64_t progressUnit = (requests/100) > 0 ? (requests/100) : 1;
   uint64_t testStart = ustime();
   for (i = 0; i < requests; i++) {
     snprintf(keyBuf, 16, "%015d", rand() % keySpaceLength);
@@ -445,7 +453,7 @@ void* lrangeWorkerThread(void* args) {
     latencies[i] = ustime() - reqStart;
     freeObjectArray(objArray);
 
-    if (i % (requests/100) == 0) {
+    if (i % progressUnit == 0) {
       printf("Progress: %3d%%\r", i*100/requests);
       fflush(stdout);
     }
