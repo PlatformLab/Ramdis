@@ -520,7 +520,11 @@ int main(int argc, char* argv[]) {
         }
       }
     } else if (strcmp(test, "sadd") == 0) {
+      printf("Test not yet implemented: %s\n", test);
+      return -1;
     } else if (strcmp(test, "spop") == 0) {
+      printf("Test not yet implemented: %s\n", test);
+      return -1;
     } else if (strcmp(test, "lrange") == 0) {
     } else if (strcmp(test, "mset") == 0) {
     } else {
