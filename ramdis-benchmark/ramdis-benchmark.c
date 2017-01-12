@@ -478,6 +478,8 @@ int main(int argc, char* argv[]) {
       workerThreadFuncPtr = getWorkerThread;
 
       /* Do pre-workload setup. */
+      printf("Doing pre-workload setup... ");
+      fflush(stdout);
 
       Object value;
       char valBuf[valueSize];
@@ -494,12 +496,16 @@ int main(int argc, char* argv[]) {
 
         set(context, &key, &value);
       }
+
+      printf("Done\n");
     } else if (strcmp(test, "set") == 0) {
       workerThreadFuncPtr = setWorkerThread;
     } else if (strcmp(test, "incr") == 0) {
       workerThreadFuncPtr = incrWorkerThread;
 
       /* Do pre-workload setup. */
+      printf("Doing pre-workload setup... ");
+      fflush(stdout);
 
       Object value;
       uint64_t initialNumber = 0;
@@ -516,6 +522,8 @@ int main(int argc, char* argv[]) {
 
         set(context, &key, &value);
       }
+
+      printf("Done\n");
     } else if (strcmp(test, "lpush") == 0) {
       workerThreadFuncPtr = lpushWorkerThread;
     } else if (strcmp(test, "rpush") == 0) {
@@ -524,6 +532,8 @@ int main(int argc, char* argv[]) {
       workerThreadFuncPtr = lpopWorkerThread;
 
       /* Do pre-workload setup. */
+      printf("Doing pre-workload setup... ");
+      fflush(stdout);
 
       Object value;
       char valBuf[valueSize];
@@ -543,10 +553,14 @@ int main(int argc, char* argv[]) {
           lpush(context, &key, &value);
         }
       }
+
+      printf("Done\n");
     } else if (strcmp(test, "rpop") == 0) {
       workerThreadFuncPtr = rpopWorkerThread;
 
       /* Do pre-workload setup. */
+      printf("Doing pre-workload setup... ");
+      fflush(stdout);
 
       Object value;
       char valBuf[valueSize];
@@ -566,6 +580,8 @@ int main(int argc, char* argv[]) {
           lpush(context, &key, &value);
         }
       }
+
+      printf("Done\n");
     } else if (strcmp(test, "sadd") == 0) {
       printf("Test not yet implemented: %s\n", test);
       return -1;
@@ -576,6 +592,8 @@ int main(int argc, char* argv[]) {
       workerThreadFuncPtr = lrangeWorkerThread;
 
       /* Do pre-workload setup. */
+      printf("Doing pre-workload setup... ");
+      fflush(stdout);
 
       Object value;
       char valBuf[valueSize];
@@ -595,6 +613,8 @@ int main(int argc, char* argv[]) {
           lpush(context, &key, &value);
         }
       }
+
+      printf("Done\n");
     } else if (strcmp(test, "mset") == 0) {
     } else {
       printf("Unrecognized test: %s\n", test);
