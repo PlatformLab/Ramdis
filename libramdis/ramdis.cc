@@ -866,11 +866,16 @@ ObjectArray* lrange(Context* c, Object* key, long start, long end) {
   }
 
   if (!listExists) {
+    tx.commit();
+
     c->err = -1;
     snprintf(c->errmsg, sizeof(c->errmsg), 
         "Unknown key");
+    
     return NULL;
   } else if (indexValue.size() == 0) {
+    tx.commit();
+
     ObjectArray* objArray = (ObjectArray*)malloc(sizeof(ObjectArray));
     objArray->array = NULL;
     objArray->len = 0;
@@ -995,7 +1000,7 @@ ObjectArray* lrange(Context* c, Object* key, long start, long end) {
       elementIndex += index.entries[segIndex].elemCount;
     }
 
-    // TODO: commit the transaction
+    tx.commit();
 
     char* objectData = (char*)malloc(rangeBuf.size());
     rangeBuf.copy(0, rangeBuf.size(), objectData);
