@@ -76,6 +76,14 @@ void reportStats(uint64_t totalTime, struct WorkerStats** wStats,
     qsort(wStats[i]->latencies, requests, sizeof(uint64_t), compareUint64_t);
   }
 
+  if (totalTime / 1000000 > 0) {
+    printf("Total Time: %.2fs\n", (float)totalTime / 1000000.0);
+  } else if (totalTime / 1000 > 0) {
+    printf("Total Time: %.2fms\n", (float)totalTime / 1000.0);
+  } else {
+    printf("Total Time: %" PRId64 "us\n", totalTime);
+  }
+
   printf("Average Request Rate: %.2f op/s\n", 
       (float)(requests * clients) / ((float)totalTime / 1000000.0));
 
