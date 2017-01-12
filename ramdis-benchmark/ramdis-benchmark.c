@@ -76,20 +76,20 @@ void reportStats(uint64_t totalTime, struct WorkerStats** wStats,
     qsort(wStats[i]->latencies, requests, sizeof(uint64_t), compareUint64_t);
   }
 
-  printf("\tAverage Request Rate: %.2f op/s\n", 
+  printf("Average Request Rate: %.2f op/s\n", 
       (float)(requests * clients) / ((float)totalTime / 1000000.0));
 
   for (i = 0; i < clients; i++) {
-    printf("\tClient %d Stats:\n", i);
-    printf("\t\tp50 Latency: %" PRId64 "us\n", 
+    printf("Client %d Stats:\n", i);
+    printf("\tp50 Latency: %" PRId64 "us\n", 
         wStats[i]->latencies[requests/2]);
-    printf("\t\tp90 Latency: %" PRId64 "us\n", 
+    printf("\tp90 Latency: %" PRId64 "us\n", 
         wStats[i]->latencies[requests*90/100]);
-    printf("\t\tp95 Latency: %" PRId64 "us\n", 
+    printf("\tp95 Latency: %" PRId64 "us\n", 
         wStats[i]->latencies[requests*95/100]);
-    printf("\t\tp99 Latency: %" PRId64 "us\n", 
+    printf("\tp99 Latency: %" PRId64 "us\n", 
         wStats[i]->latencies[requests*99/100]);
-    printf("\t\tp99.9 Latency: %" PRId64 "us\n", 
+    printf("\tp99.9 Latency: %" PRId64 "us\n", 
         wStats[i]->latencies[requests*999/1000]);
   }
 }
@@ -122,9 +122,14 @@ void* getWorkerThread(void* args) {
     Object* value = get(context, &key);
     latencies[i] = ustime() - reqStart;
     freeObject(value);
+
+    if (i % (requests/100) == 0) {
+      printf("Progress: %3d%%\r", i*100/requests);
+      fflush(stdout);
+    }
   }
   uint64_t testEnd = ustime(); 
-
+  
   wStats->latencies = latencies;
 
   ramdis_disconnect(context);
@@ -165,6 +170,11 @@ void* setWorkerThread(void* args) {
     uint64_t reqStart = ustime();
     set(context, &key, &value);
     latencies[i] = ustime() - reqStart;
+
+    if (i % (requests/100) == 0) {
+      printf("Progress: %3d%%\r", i*100/requests);
+      fflush(stdout);
+    }
   }
   uint64_t testEnd = ustime(); 
 
@@ -202,6 +212,11 @@ void* incrWorkerThread(void* args) {
     uint64_t reqStart = ustime();
     incr(context, &key);
     latencies[i] = ustime() - reqStart;
+
+    if (i % (requests/100) == 0) {
+      printf("Progress: %3d%%\r", i*100/requests);
+      fflush(stdout);
+    }
   }
   uint64_t testEnd = ustime(); 
 
@@ -245,6 +260,11 @@ void* lpushWorkerThread(void* args) {
     uint64_t reqStart = ustime();
     lpush(context, &key, &value);
     latencies[i] = ustime() - reqStart;
+
+    if (i % (requests/100) == 0) {
+      printf("Progress: %3d%%\r", i*100/requests);
+      fflush(stdout);
+    }
   }
   uint64_t testEnd = ustime(); 
 
@@ -288,6 +308,11 @@ void* rpushWorkerThread(void* args) {
     uint64_t reqStart = ustime();
     rpush(context, &key, &value);
     latencies[i] = ustime() - reqStart;
+
+    if (i % (requests/100) == 0) {
+      printf("Progress: %3d%%\r", i*100/requests);
+      fflush(stdout);
+    }
   }
   uint64_t testEnd = ustime(); 
 
@@ -325,6 +350,11 @@ void* lpopWorkerThread(void* args) {
     uint64_t reqStart = ustime();
     lpop(context, &key);
     latencies[i] = ustime() - reqStart;
+
+    if (i % (requests/100) == 0) {
+      printf("Progress: %3d%%\r", i*100/requests);
+      fflush(stdout);
+    }
   }
   uint64_t testEnd = ustime(); 
 
@@ -362,6 +392,11 @@ void* rpopWorkerThread(void* args) {
     uint64_t reqStart = ustime();
     rpop(context, &key);
     latencies[i] = ustime() - reqStart;
+
+    if (i % (requests/100) == 0) {
+      printf("Progress: %3d%%\r", i*100/requests);
+      fflush(stdout);
+    }
   }
   uint64_t testEnd = ustime(); 
 
@@ -401,6 +436,11 @@ void* lrangeWorkerThread(void* args) {
     ObjectArray* objArray = lrange(context, &key, 0, lrangeSize);
     latencies[i] = ustime() - reqStart;
     freeObjectArray(objArray);
+
+    if (i % (requests/100) == 0) {
+      printf("Progress: %3d%%\r", i*100/requests);
+      fflush(stdout);
+    }
   }
   uint64_t testEnd = ustime(); 
 
