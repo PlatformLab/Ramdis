@@ -91,6 +91,7 @@ extern "C" {
   Object* spop(Context* c, Object* key);
   ObjectArray* lrange(Context* c, Object* key, long start, long end);
   void mset(Context* c, ObjectArray* keysArray, ObjectArray* valuesArray);
+  uint64_t del(Context* c, ObjectArray* keysArray);
 #ifdef __cplusplus
 }
 #endif

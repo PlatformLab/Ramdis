@@ -1019,6 +1019,28 @@ void mset(Context* c, ObjectArray* keysArray, Object* valuesArray) {
 
 }
 
+uint64_t del(Context* c, ObjectArray* keysArray) {
+  RAMCloud::RamCloud* client = (RAMCloud::RamCloud*)c->client;
+  RAMCloud::Transaction tx(client);
+ 
+  uint64_t delCount = 0; 
+  for (int i = 0; i < keysArray->len; i++) {
+    try {
+      tx.remove(c->tableId, 
+          keysArray->array[i].data, 
+          keysArray->array[i].len);
+
+      delCount++;
+    } catch (RAMCloud::ObjectDoesntExistException& e) {
+      continue;
+    }
+  }
+
+  tx.commit();
+
+  return delCount;
+}
+
 //std::string unsupportedCommand(RAMCloud::RamCloud *client,
 //    uint64_t tableId,
 //    std::vector<std::string> *argv) {
