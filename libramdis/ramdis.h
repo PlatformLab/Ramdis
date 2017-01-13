@@ -74,24 +74,42 @@ extern "C" {
     uint32_t len;
   } ObjectArray;
 
-  void printObjectArray(ObjectArray* objArray);
+  /* Connection */
   Context* ramdis_connect(char* locator);
   void ramdis_disconnect(Context* c);
-  void freeObject(Object* obj);
-  void freeObjectArray(ObjectArray* objArray);
   char* ping(Context* c, char* msg);
-  void set(Context* c, Object* key, Object* value);
+
+  /* Strings */
   Object* get(Context* c, Object* key);
+  void set(Context* c, Object* key, Object* value);
+  void mset(Context* c, ObjectArray* keysArray, ObjectArray* valuesArray);
   long incr(Context* c, Object* key);
+
+  /* Lists */
   uint64_t lpush(Context* c, Object* key, Object* value);
   uint64_t rpush(Context* c, Object* key, Object* value);
   Object* lpop(Context* c, Object* key);
   Object* rpop(Context* c, Object* key);
+  ObjectArray* lrange(Context* c, Object* key, long start, long end);
+
+  /* Sets */
   uint64_t sadd(Context* c, Object* key, ObjectArray* valuesArray);
   Object* spop(Context* c, Object* key);
-  ObjectArray* lrange(Context* c, Object* key, long start, long end);
-  void mset(Context* c, ObjectArray* keysArray, ObjectArray* valuesArray);
+
+  /* Sorted Sets */
+
+  /* Hashes */
+
+  /* HyperLogLog */
+
+  /* All */
   uint64_t del(Context* c, ObjectArray* keysArray);
+
+  /* Misc. */
+  void freeObject(Object* obj);
+  void freeObjectArray(ObjectArray* objArray);
+  void printObjectArray(ObjectArray* objArray);
+
 #ifdef __cplusplus
 }
 #endif

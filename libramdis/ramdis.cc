@@ -71,6 +71,14 @@ void serverLog(int level, const char *fmt, ...) {
   printf(pmsg);
 }
 
+void makeKey(RAMCloud::Buffer* buf, const char* key, uint16_t keyLen, 
+    const char* suffix, uint8_t suffixLen) {
+  buf->append((void*)&keyLen, sizeof(uint16_t));
+  buf->append(key, keyLen);
+  buf->append((void*)&suffixLen, sizeof(uint8_t));
+  buf->append(suffix, suffixLen);
+}
+
 Context* ramdis_connect(char* locator) {
   Context* c = new Context();
   RAMCloud::RamCloud* client = new RAMCloud::RamCloud(locator);
@@ -87,26 +95,8 @@ void ramdis_disconnect(Context* c) {
   delete c;
 }
 
-void freeObject(Object* obj) {
-  free(obj->data);
-  free(obj);
-}
-
-void freeObjectArray(ObjectArray* objArray) {
-  if (objArray->len > 0) {
-    free((char*)(objArray->array[0].data));
-    free(objArray->array);
-  }
-  free(objArray);
-}
-
 char* ping(Context* c, char* msg) {
   return NULL;
-}
-
-void set(Context* c, Object* key, Object* value) {
-  RAMCloud::RamCloud* client = (RAMCloud::RamCloud*)c->client;
-  client->write(c->tableId, key->data, key->len, value->data, value->len);
 }
 
 Object* get(Context* c, Object* key) {
@@ -128,6 +118,15 @@ Object* get(Context* c, Object* key) {
   }
 }
 
+void set(Context* c, Object* key, Object* value) {
+  RAMCloud::RamCloud* client = (RAMCloud::RamCloud*)c->client;
+  client->write(c->tableId, key->data, key->len, value->data, value->len);
+}
+
+void mset(Context* c, ObjectArray* keysArray, Object* valuesArray) {
+
+}
+
 long incr(Context* c, Object* key) {
   RAMCloud::RamCloud* client = (RAMCloud::RamCloud*)c->client;
   try {
@@ -142,14 +141,6 @@ long incr(Context* c, Object* key) {
         "Unknown key");
     return -1;
   }
-}
-
-void makeKey(RAMCloud::Buffer* buf, const char* key, uint16_t keyLen, 
-    const char* suffix, uint8_t suffixLen) {
-  buf->append((void*)&keyLen, sizeof(uint16_t));
-  buf->append(key, keyLen);
-  buf->append((void*)&suffixLen, sizeof(uint8_t));
-  buf->append(suffix, suffixLen);
 }
 
 uint64_t lpush(Context* c, Object* key, Object* value) {
@@ -837,14 +828,6 @@ Object* rpop(Context* c, Object* key) {
   }
 }
 
-uint64_t sadd(Context* c, Object* key, ObjectArray* values) {
-  return 0;
-}
-
-Object* spop(Context* c, Object* key) {
-  return NULL;
-}
-
 ObjectArray* lrange(Context* c, Object* key, long start, long end) {
   RAMCloud::RamCloud* client = (RAMCloud::RamCloud*)c->client;
   RAMCloud::Transaction tx(client);
@@ -1015,8 +998,12 @@ ObjectArray* lrange(Context* c, Object* key, long start, long end) {
   }
 }
 
-void mset(Context* c, ObjectArray* keysArray, Object* valuesArray) {
+uint64_t sadd(Context* c, Object* key, ObjectArray* values) {
+  return 0;
+}
 
+Object* spop(Context* c, Object* key) {
+  return NULL;
 }
 
 uint64_t del(Context* c, ObjectArray* keysArray) {
@@ -1039,6 +1026,19 @@ uint64_t del(Context* c, ObjectArray* keysArray) {
   tx.commit();
 
   return delCount;
+}
+
+void freeObject(Object* obj) {
+  free(obj->data);
+  free(obj);
+}
+
+void freeObjectArray(ObjectArray* objArray) {
+  if (objArray->len > 0) {
+    free((char*)(objArray->array[0].data));
+    free(objArray->array);
+  }
+  free(objArray);
 }
 
 //std::string unsupportedCommand(RAMCloud::RamCloud *client,
