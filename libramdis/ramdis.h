@@ -1,6 +1,8 @@
 #ifndef __RAMDIS_H
 #define __RAMDIS_H
 
+#include <stdint.h>
+
 #define LOG_MAX_LEN    1024 /* Default maximum length of syslog messages */
 
 /* Log levels */

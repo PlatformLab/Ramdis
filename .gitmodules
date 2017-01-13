@@ -7,3 +7,6 @@
 [submodule "docopt.c"]
 	path = docopt.c
 	url = git@github.com:docopt/docopt.c.git
+[submodule "googletest"]
+	path = googletest
+	url = git@github.com:google/googletest.git
