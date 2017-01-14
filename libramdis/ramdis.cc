@@ -71,12 +71,12 @@ void serverLog(int level, const char *fmt, ...) {
   printf(pmsg);
 }
 
-void makeKey(RAMCloud::Buffer* buf, const char* key, uint16_t keyLen, 
-    const char* suffix, uint8_t suffixLen) {
-  buf->append((void*)&keyLen, sizeof(uint16_t));
-  buf->append(key, keyLen);
-  buf->append((void*)&suffixLen, sizeof(uint8_t));
-  buf->append(suffix, suffixLen);
+void appendKeyComponent(RAMCloud::Buffer* buf, const char* comp, 
+    uint16_t compLen) {
+  /* Use appendCopy here because we are not sure if the caller will maintain
+   * the memory pointed to for the duration of the use of the buffer. */
+  buf->appendCopy((void*)&compLen, sizeof(uint16_t));
+  buf->appendCopy(comp, compLen);
 }
 
 Context* ramdis_connect(char* locator) {
@@ -101,9 +101,17 @@ char* ping(Context* c, char* msg) {
 
 Object* get(Context* c, Object* key) {
   RAMCloud::RamCloud* client = (RAMCloud::RamCloud*)c->client;
+
+  RAMCloud::Buffer rootKey;
+  appendKeyComponent(&rootKey, (char*)key->data, key->len);
+
   RAMCloud::Buffer buffer;
   try {
-    client->read(c->tableId, key->data, key->len, &buffer);
+    client->read(c->tableId, 
+        rootKey.getRange(0, rootKey.size()), 
+        rootKey.size(), 
+        &buffer);
+
     Object* value = (Object*)malloc(sizeof(Object));
     value->data = (void*)malloc(buffer.size());
     value->len = buffer.size();
@@ -120,7 +128,15 @@ Object* get(Context* c, Object* key) {
 
 void set(Context* c, Object* key, Object* value) {
   RAMCloud::RamCloud* client = (RAMCloud::RamCloud*)c->client;
-  client->write(c->tableId, key->data, key->len, value->data, value->len);
+
+  RAMCloud::Buffer rootKey;
+  appendKeyComponent(&rootKey, (char*)key->data, key->len);
+
+  client->write(c->tableId,
+        rootKey.getRange(0, rootKey.size()), 
+        rootKey.size(),
+        value->data,
+        value->len);
 }
 
 void mset(Context* c, ObjectArray* keysArray, Object* valuesArray) {
@@ -129,10 +145,14 @@ void mset(Context* c, ObjectArray* keysArray, Object* valuesArray) {
 
 long incr(Context* c, Object* key) {
   RAMCloud::RamCloud* client = (RAMCloud::RamCloud*)c->client;
+
+  RAMCloud::Buffer rootKey;
+  appendKeyComponent(&rootKey, (char*)key->data, key->len);
+
   try {
     uint64_t newValue = client->incrementInt64(c->tableId, 
-        key->data,
-        key->len,
+        rootKey.getRange(0, rootKey.size()), 
+        rootKey.size(),
         1);
     return (long)newValue;
   } catch (RAMCloud::ObjectDoesntExistException& e) {
@@ -148,16 +168,16 @@ uint64_t lpush(Context* c, Object* key, Object* value) {
   RAMCloud::Transaction tx(client);
 
   /* Construct RAMCloud key for the list index. */ 
-  RAMCloud::Buffer indexKey;
-  makeKey(&indexKey, (char*)key->data, key->len, "idx", strlen("idx") + 1);
+  RAMCloud::Buffer rootKey;
+  appendKeyComponent(&rootKey, (char*)key->data, key->len);
 
   /* Read the index. */
   RAMCloud::Buffer indexValue;
   bool listExists = true;
   try {
     tx.read(c->tableId, 
-        indexKey.getRange(0, indexKey.size()), 
-        indexKey.size(), 
+        rootKey.getRange(0, rootKey.size()), 
+        rootKey.size(), 
         &indexValue);
   } catch (RAMCloud::ObjectDoesntExistException& e) {
     listExists = false;
@@ -204,9 +224,8 @@ uint64_t lpush(Context* c, Object* key, Object* value) {
       }
     }
     
-    char suffix[8];
-    sprintf(suffix, "%d", newSegId);
-    makeKey(&segKey, (char*)key->data, key->len, suffix, strlen(suffix) + 1);
+    segKey.append(&rootKey);
+    appendKeyComponent(&segKey, (char*)&newSegId, sizeof(int16_t));
 
     uint16_t valueLen = (uint16_t)value->len;
     newSegValue.append((void*)&valueLen, sizeof(uint16_t));
@@ -229,9 +248,10 @@ uint64_t lpush(Context* c, Object* key, Object* value) {
      * In this case we don't need to read the head segment to add the new
      * value, we can just write the new head segment directly for lower
      * latency. */
-    char suffix[8];
-    sprintf(suffix, "%d", index.entries[0].segId);
-    makeKey(&segKey, (char*)key->data, key->len, suffix, strlen(suffix) + 1);
+
+    segKey.append(&rootKey);
+    appendKeyComponent(&segKey, (char*)&index.entries[0].segId, 
+        sizeof(int16_t));
 
     uint16_t valueLen = (uint16_t)value->len;
     newSegValue.append((void*)&valueLen, sizeof(uint16_t));
@@ -245,9 +265,10 @@ uint64_t lpush(Context* c, Object* key, Object* value) {
     /* The list exists, the index is not empty, and the head segment is neither
      * full nor totally empty. In this case we need to read the head segment
      * and add the new value to it. */
-    char suffix[8];
-    sprintf(suffix, "%d", index.entries[0].segId);
-    makeKey(&segKey, (char*)key->data, key->len, suffix, strlen(suffix) + 1);
+
+    segKey.append(&rootKey);
+    appendKeyComponent(&segKey, (char*)&index.entries[0].segId, 
+        sizeof(int16_t));
 
     RAMCloud::Buffer segValue;
     try {
@@ -295,8 +316,8 @@ uint64_t lpush(Context* c, Object* key, Object* value) {
       newSegValue.size());
 
   tx.write(c->tableId, 
-      indexKey.getRange(0, indexKey.size()), 
-      indexKey.size(), 
+      rootKey.getRange(0, rootKey.size()), 
+      rootKey.size(), 
       newIndexValue.getRange(0, newIndexValue.size()),
       newIndexValue.size());
 
@@ -310,16 +331,16 @@ uint64_t rpush(Context* c, Object* key, Object* value) {
   RAMCloud::Transaction tx(client);
 
   /* Construct RAMCloud key for the list index. */ 
-  RAMCloud::Buffer indexKey;
-  makeKey(&indexKey, (char*)key->data, key->len, "idx", strlen("idx") + 1);
+  RAMCloud::Buffer rootKey;
+  appendKeyComponent(&rootKey, (char*)key->data, key->len);
 
   /* Read the index. */
   RAMCloud::Buffer indexValue;
   bool listExists = true;
   try {
     tx.read(c->tableId, 
-        indexKey.getRange(0, indexKey.size()), 
-        indexKey.size(), 
+        rootKey.getRange(0, rootKey.size()), 
+        rootKey.size(), 
         &indexValue);
   } catch (RAMCloud::ObjectDoesntExistException& e) {
     listExists = false;
@@ -365,9 +386,8 @@ uint64_t rpush(Context* c, Object* key, Object* value) {
       }
     }
     
-    char suffix[8];
-    sprintf(suffix, "%d", newSegId);
-    makeKey(&segKey, (char*)key->data, key->len, suffix, strlen(suffix) + 1);
+    segKey.append(&rootKey);
+    appendKeyComponent(&segKey, (char*)&newSegId, sizeof(int16_t));
 
     uint16_t valueLen = (uint16_t)value->len;
     newSegValue.append((void*)&valueLen, sizeof(uint16_t));
@@ -390,9 +410,9 @@ uint64_t rpush(Context* c, Object* key, Object* value) {
      * In this case we don't need to read the tail segment to add the new
      * value, we can just write the new tail segment directly for lower
      * latency. */
-    char suffix[8];
-    sprintf(suffix, "%d", index.entries[index.len - 1].segId);
-    makeKey(&segKey, (char*)key->data, key->len, suffix, strlen(suffix) + 1);
+    segKey.append(&rootKey);
+    appendKeyComponent(&segKey, (char*)&index.entries[index.len - 1].segId, 
+        sizeof(int16_t));
 
     uint16_t valueLen = (uint16_t)value->len;
     newSegValue.append((void*)&valueLen, sizeof(uint16_t));
@@ -407,9 +427,9 @@ uint64_t rpush(Context* c, Object* key, Object* value) {
     /* The list exists, the index is not empty, and the tail segment is neither
      * full nor totally empty. In this case we need to read the tail segment
      * and add the new value to it. */
-    char suffix[8];
-    sprintf(suffix, "%d", index.entries[index.len - 1].segId);
-    makeKey(&segKey, (char*)key->data, key->len, suffix, strlen(suffix) + 1);
+    segKey.append(&rootKey);
+    appendKeyComponent(&segKey, (char*)&index.entries[index.len - 1].segId, 
+        sizeof(int16_t));
 
     RAMCloud::Buffer segValue;
     try {
@@ -458,8 +478,8 @@ uint64_t rpush(Context* c, Object* key, Object* value) {
       newSegValue.size());
 
   tx.write(c->tableId, 
-      indexKey.getRange(0, indexKey.size()), 
-      indexKey.size(), 
+      rootKey.getRange(0, rootKey.size()), 
+      rootKey.size(), 
       newIndexValue.getRange(0, newIndexValue.size()),
       newIndexValue.size());
 
@@ -473,15 +493,15 @@ Object* lpop(Context* c, Object* key) {
   RAMCloud::Transaction tx(client);
 
   /* Construct RAMCloud key for the list index. */ 
-  RAMCloud::Buffer indexKey;
-  makeKey(&indexKey, (char*)key->data, key->len, "idx", strlen("idx") + 1);
+  RAMCloud::Buffer rootKey;
+  appendKeyComponent(&rootKey, (char*)key->data, key->len);
 
   /* Read the index. */
   RAMCloud::Buffer indexValue;
   try {
     tx.read(c->tableId, 
-        indexKey.getRange(0, indexKey.size()), 
-        indexKey.size(), 
+        rootKey.getRange(0, rootKey.size()), 
+        rootKey.size(), 
         &indexValue);
   } catch (RAMCloud::ObjectDoesntExistException& e) {
     c->err = -1;
@@ -518,8 +538,8 @@ Object* lpop(Context* c, Object* key) {
       entry.segSizeKb = 0;
 
       tx.write(c->tableId, 
-          indexKey.getRange(0, indexKey.size()),
-          indexKey.size(),
+          rootKey.getRange(0, rootKey.size()),
+          rootKey.size(),
           &entry,
           sizeof(ListIndexEntry));
 
@@ -549,9 +569,10 @@ Object* lpop(Context* c, Object* key) {
     } else {
       // First segment that has 1 or more elements.
       RAMCloud::Buffer segKey;
-      char suffix[8];
-      sprintf(suffix, "%d", index.entries[i].segId);
-      makeKey(&segKey, (char*)key->data, key->len, suffix, strlen(suffix) + 1);
+
+      segKey.append(&rootKey);
+      appendKeyComponent(&segKey, (char*)&index.entries[i].segId, 
+          sizeof(int16_t));
 
       RAMCloud::Buffer segValue;
       try {
@@ -592,8 +613,8 @@ Object* lpop(Context* c, Object* key) {
           entry.segSizeKb = 0;
 
           tx.write(c->tableId, 
-              indexKey.getRange(0, indexKey.size()),
-              indexKey.size(),
+              rootKey.getRange(0, rootKey.size()),
+              rootKey.size(),
               &entry,
               sizeof(ListIndexEntry));
 
@@ -604,8 +625,8 @@ Object* lpop(Context* c, Object* key) {
           for (int j = i + 1; j < index.len; j++) {
             if (index.entries[j].elemCount > 0) {
               tx.write(c->tableId,
-                  indexKey.getRange(0, indexKey.size()),
-                  indexKey.size(),
+                  rootKey.getRange(0, rootKey.size()),
+                  rootKey.size(),
                   &index.entries[j],
                   (index.len - j)*sizeof(ListIndexEntry));
 
@@ -634,8 +655,8 @@ Object* lpop(Context* c, Object* key) {
         index.entries[i].segSizeKb = (uint8_t)(newSegValue.size() >> 10);
 
         tx.write(c->tableId,
-            indexKey.getRange(0, indexKey.size()),
-            indexKey.size(),
+            rootKey.getRange(0, rootKey.size()),
+            rootKey.size(),
             &index.entries[i],
             (index.len - i)*sizeof(ListIndexEntry));
 
@@ -652,15 +673,15 @@ Object* rpop(Context* c, Object* key) {
   RAMCloud::Transaction tx(client);
 
   /* Construct RAMCloud key for the list index. */ 
-  RAMCloud::Buffer indexKey;
-  makeKey(&indexKey, (char*)key->data, key->len, "idx", strlen("idx") + 1);
+  RAMCloud::Buffer rootKey;
+  appendKeyComponent(&rootKey, (char*)key->data, key->len);
 
   /* Read the index. */
   RAMCloud::Buffer indexValue;
   try {
     tx.read(c->tableId, 
-        indexKey.getRange(0, indexKey.size()), 
-        indexKey.size(), 
+        rootKey.getRange(0, rootKey.size()), 
+        rootKey.size(), 
         &indexValue);
   } catch (RAMCloud::ObjectDoesntExistException& e) {
     c->err = -1;
@@ -697,8 +718,8 @@ Object* rpop(Context* c, Object* key) {
       entry.segSizeKb = 0;
 
       tx.write(c->tableId, 
-          indexKey.getRange(0, indexKey.size()),
-          indexKey.size(),
+          rootKey.getRange(0, rootKey.size()),
+          rootKey.size(),
           &entry,
           sizeof(ListIndexEntry));
 
@@ -728,9 +749,10 @@ Object* rpop(Context* c, Object* key) {
     } else {
       // First segment that has 1 or more elements.
       RAMCloud::Buffer segKey;
-      char suffix[8];
-      sprintf(suffix, "%d", index.entries[i].segId);
-      makeKey(&segKey, (char*)key->data, key->len, suffix, strlen(suffix) + 1);
+
+      segKey.append(&rootKey);
+      appendKeyComponent(&segKey, (char*)&index.entries[i].segId, 
+          sizeof(int16_t));
 
       RAMCloud::Buffer segValue;
       try {
@@ -771,8 +793,8 @@ Object* rpop(Context* c, Object* key) {
           entry.segSizeKb = 0;
 
           tx.write(c->tableId, 
-              indexKey.getRange(0, indexKey.size()),
-              indexKey.size(),
+              rootKey.getRange(0, rootKey.size()),
+              rootKey.size(),
               &entry,
               sizeof(ListIndexEntry));
 
@@ -783,8 +805,8 @@ Object* rpop(Context* c, Object* key) {
           for (int j = i - 1; j >= 0; j--) {
             if (index.entries[j].elemCount > 0) {
               tx.write(c->tableId,
-                  indexKey.getRange(0, indexKey.size()),
-                  indexKey.size(),
+                  rootKey.getRange(0, rootKey.size()),
+                  rootKey.size(),
                   &index.entries[0],
                   (j + 1)*sizeof(ListIndexEntry));
 
@@ -815,8 +837,8 @@ Object* rpop(Context* c, Object* key) {
         index.entries[i].segSizeKb = (uint8_t)(newSegValue.size() >> 10);
 
         tx.write(c->tableId,
-            indexKey.getRange(0, indexKey.size()),
-            indexKey.size(),
+            rootKey.getRange(0, rootKey.size()),
+            rootKey.size(),
             &index.entries[0],
             (i + 1)*sizeof(ListIndexEntry));
 
@@ -833,16 +855,16 @@ ObjectArray* lrange(Context* c, Object* key, long start, long end) {
   RAMCloud::Transaction tx(client);
 
   /* Construct RAMCloud key for the list index. */ 
-  RAMCloud::Buffer indexKey;
-  makeKey(&indexKey, (char*)key->data, key->len, "idx", strlen("idx") + 1);
+  RAMCloud::Buffer rootKey;
+  appendKeyComponent(&rootKey, (char*)key->data, key->len);
 
   /* Read the index. */
   RAMCloud::Buffer indexValue;
   bool listExists = true;
   try {
     tx.read(c->tableId, 
-        indexKey.getRange(0, indexKey.size()), 
-        indexKey.size(), 
+        rootKey.getRange(0, rootKey.size()), 
+        rootKey.size(), 
         &indexValue);
   } catch (RAMCloud::ObjectDoesntExistException& e) {
     listExists = false;
@@ -934,10 +956,9 @@ ObjectArray* lrange(Context* c, Object* key, long start, long end) {
     for (int i = 0; i < segmentsInRange; i++) {
       uint32_t segIndex = firstSegInRange + i;
       RAMCloud::Buffer segKey;
-      char suffix[8];
-      sprintf(suffix, "%d", index.entries[segIndex].segId);
-      makeKey(&segKey, (char*)key->data, key->len, suffix, 
-          strlen(suffix) + 1);
+      segKey.append(&rootKey);
+      appendKeyComponent(&segKey, (char*)&index.entries[segIndex].segId, 
+          sizeof(int16_t));
       readOps[i].construct(&tx, c->tableId, segKey.getRange(0,
             segKey.size()), segKey.size(), &segValues[i], true);
     }
