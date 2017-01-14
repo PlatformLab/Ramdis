@@ -35,36 +35,6 @@ TEST(GetSetTest, readWrite) {
   ramdis_disconnect(context);
 }
 
-// Tests INCR command.
-TEST(IncrTest, correctValues) {
-  Context* context = ramdis_connect(coordinatorLocator); 
-
-  Object key;
-  key.data = (void*)"counter";
-  key.len = strlen((char*)key.data) + 1;
-
-  uint64_t x = 0;
-  Object value;
-  value.data = (void*)&x;
-  value.len = sizeof(uint64_t);
-
-  set(context, &key, &value);
-
-  uint64_t counterValue;
-  for (int i = 0; i < 1000; i++) {
-    counterValue = incr(context, &key);
-    EXPECT_EQ(i + 1, counterValue);
-  }
-
-  ObjectArray keysArray;
-  keysArray.array = &key;
-  keysArray.len = 1;
-
-  del(context, &keysArray);
-
-  ramdis_disconnect(context);
-}
-
 TEST(LpushTest, pushManyValues) {
   Context* context = ramdis_connect(coordinatorLocator); 
 
