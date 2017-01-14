@@ -171,6 +171,48 @@ TEST(LpopTest, popManyValues) {
   ramdis_disconnect(context);
 }
 
+TEST(RpopTest, popManyValues) {
+  Context* context = ramdis_connect(coordinatorLocator); 
+
+  /* Number of elements to put in the list. */
+  uint32_t totalElements = (1<<13);
+  /* Size of each element in bytes. */
+  size_t elementSize = 8;
+
+  Object key;
+  key.data = (void*)"mylist";
+  key.len = strlen((char*)key.data) + 1;
+
+  Object value;
+  char valBuf[elementSize];
+  value.data = (void*)valBuf;
+  value.len = elementSize;
+
+  uint32_t elemCount;
+  for (uint32_t i = 0; i < totalElements; i++) {
+    sprintf(valBuf, "%07d", i);
+    elemCount = lpush(context, &key, &value);
+
+    EXPECT_EQ(0, context->err);
+    EXPECT_EQ(i + 1, elemCount);
+  }
+
+  for (uint32_t i = 0; i < totalElements; i++) {
+    sprintf(valBuf, "%07d", i);
+    Object* obj = rpop(context, &key);
+    EXPECT_STREQ(valBuf, (char*)obj->data);
+    freeObject(obj);
+  }
+
+  ObjectArray keysArray;
+  keysArray.array = &key;
+  keysArray.len = 1;
+
+  del(context, &keysArray);
+
+  ramdis_disconnect(context);
+}
+
 // Tests DEL command.
 TEST(DelTest, deleteSingleObject) {
   Context* context = ramdis_connect(coordinatorLocator); 
