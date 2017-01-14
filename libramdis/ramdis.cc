@@ -1257,11 +1257,66 @@ uint64_t del(Context* c, ObjectArray* keysArray) {
   RAMCloud::Transaction tx(client);
  
   uint64_t delCount = 0; 
+  bool oneOrMoreKeysMalformed = false;
   for (int i = 0; i < keysArray->len; i++) {
+    RAMCloud::Buffer rootKey;
+    appendKeyComponent(&rootKey, (char*)keysArray->array[i].data,
+        keysArray->array[i].len);
+
+    RAMCloud::Buffer rootValue;
     try {
-      tx.remove(c->tableId, 
-          keysArray->array[i].data, 
-          keysArray->array[i].len);
+      tx.read(c->tableId, 
+          rootKey.getRange(0, rootKey.size()), 
+          rootKey.size(), 
+          &rootValue);
+
+      if (rootValue.size() < sizeof(struct ObjectMetadata)) {
+        oneOrMoreKeysMalformed = true;
+        continue;
+      }
+      
+      struct ObjectMetadata* objMtd 
+          = rootValue.getOffset<struct ObjectMetadata>(0);
+
+      if (objMtd->type == REDIS_STRING) {
+        tx.remove(c->tableId, 
+            rootKey.getRange(0, rootKey.size()), 
+            rootKey.size());
+      } else if (objMtd->type == REDIS_LIST) {
+        ListIndex index;
+        index.entries = static_cast<ListIndexEntry*>(
+            rootValue.getRange(sizeof(struct ObjectMetadata), 
+              rootValue.size() - sizeof(struct ObjectMetadata)));  
+        index.len = (rootValue.size() - sizeof(struct ObjectMetadata))
+            / sizeof(ListIndexEntry);
+
+        /* Delete each of the segments. */
+        for (uint32_t i = 0; i < index.len; i++) {
+          RAMCloud::Buffer segKey;
+          segKey.append(&rootKey);
+          appendKeyComponent(&segKey, (char*)&index.entries[i].segId, 
+              sizeof(int16_t));
+
+          tx.remove(c->tableId, 
+              segKey.getRange(0, segKey.size()), 
+              segKey.size());
+        } 
+
+        /* Delete the root value holding the index. */
+        tx.remove(c->tableId, 
+            rootKey.getRange(0, rootKey.size()), 
+            rootKey.size());
+      } else if (objMtd->type == REDIS_SET) {
+      
+      } else if (objMtd->type == REDIS_SORTEDSET) {
+      
+      } else if (objMtd->type == REDIS_HASH) {
+      
+      } else if (objMtd->type == REDIS_HYPERLOGLOG) {
+
+      } else {
+
+      }
 
       delCount++;
     } catch (RAMCloud::ObjectDoesntExistException& e) {
@@ -1270,6 +1325,13 @@ uint64_t del(Context* c, ObjectArray* keysArray) {
   }
 
   tx.commit();
+
+  if (oneOrMoreKeysMalformed) {
+    ERROR("One or more keys in the delete set were detected to be malformed.\n");
+    c->err = -1;
+    snprintf(c->errmsg, sizeof(c->errmsg), 
+        "One or more keys in the delete set were detected to be malformed.");
+  }
 
   return delCount;
 }
