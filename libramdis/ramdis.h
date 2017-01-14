@@ -3,6 +3,14 @@
 
 #include <stdint.h>
 
+/* Redis data structures. */
+#define REDIS_STRING 1
+#define REDIS_LIST 2
+#define REDIS_SET 3
+#define REDIS_SORTEDSET 4
+#define REDIS_HASH 5
+#define REDIS_HYPERLOGLOG 6
+
 #define LOG_MAX_LEN    1024 /* Default maximum length of syslog messages */
 
 /* Log levels */
