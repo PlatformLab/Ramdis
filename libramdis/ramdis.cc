@@ -21,6 +21,10 @@
  * (?)
  */
 
+struct ObjectMetadata {
+  uint8_t type;
+};
+
 struct ListIndexEntry {
   int16_t segId;
   uint16_t elemCount;
@@ -105,17 +109,26 @@ Object* get(Context* c, Object* key) {
   RAMCloud::Buffer rootKey;
   appendKeyComponent(&rootKey, (char*)key->data, key->len);
 
-  RAMCloud::Buffer buffer;
+  RAMCloud::Buffer rootValue;
   try {
     client->read(c->tableId, 
         rootKey.getRange(0, rootKey.size()), 
         rootKey.size(), 
-        &buffer);
+        &rootValue);
+
+    if (rootValue.size() < sizeof(struct ObjectMetadata)) {
+      ERROR("Data structure malformed. This is a bug.\n");
+      DEBUG("Object exists but is missing its metadata.\n");
+      c->err = -1;
+      snprintf(c->errmsg, sizeof(c->errmsg), 
+          "Data structure malformed. This is a bug.");
+      return NULL;
+    }
 
     Object* value = (Object*)malloc(sizeof(Object));
-    value->data = (void*)malloc(buffer.size());
-    value->len = buffer.size();
-    buffer.copy(0, value->len, value->data);
+    value->len = rootValue.size() - sizeof(struct ObjectMetadata);
+    value->data = (void*)malloc(value->len);
+    rootValue.copy(sizeof(struct ObjectMetadata), value->len, value->data);
     
     return value;
   } catch (RAMCloud::ObjectDoesntExistException& e) {
@@ -132,11 +145,19 @@ void set(Context* c, Object* key, Object* value) {
   RAMCloud::Buffer rootKey;
   appendKeyComponent(&rootKey, (char*)key->data, key->len);
 
+  RAMCloud::Buffer rootValue;
+
+  struct ObjectMetadata objMtd;
+  objMtd.type = REDIS_STRING;
+
+  rootValue.append((void*)&objMtd, sizeof(struct ObjectMetadata));
+  rootValue.append(value->data, value->len);
+
   client->write(c->tableId,
         rootKey.getRange(0, rootKey.size()), 
         rootKey.size(),
-        value->data,
-        value->len);
+        rootValue.getRange(0, rootValue.size()), 
+        rootValue.size());
 }
 
 void mset(Context* c, ObjectArray* keysArray, Object* valuesArray) {
@@ -172,24 +193,54 @@ uint64_t lpush(Context* c, Object* key, Object* value) {
   appendKeyComponent(&rootKey, (char*)key->data, key->len);
 
   /* Read the index. */
-  RAMCloud::Buffer indexValue;
-  bool listExists = true;
+  RAMCloud::Buffer rootValue;
+  bool objectExists = true;
   try {
     tx.read(c->tableId, 
         rootKey.getRange(0, rootKey.size()), 
         rootKey.size(), 
-        &indexValue);
+        &rootValue);
   } catch (RAMCloud::ObjectDoesntExistException& e) {
-    listExists = false;
+    objectExists = false;
+  }
+
+  /* Sanity checks:
+   * 1) If the object exists it should have metadata.
+   * 2) If the object exists it should be of the correct data type. */
+  struct ObjectMetadata* objMtd = NULL;
+  if (objectExists) {
+    if (rootValue.size() < sizeof(struct ObjectMetadata)) {
+      tx.commit();
+      ERROR("Data structure malformed. This is a bug.\n");
+      DEBUG("Object exists but is missing its metadata.\n");
+      c->err = -1;
+      snprintf(c->errmsg, sizeof(c->errmsg), 
+          "Data structure malformed. This is a bug.");
+      return 0;
+    } else {
+      objMtd = rootValue.getOffset<struct ObjectMetadata>(0);
+      if (objMtd->type != REDIS_LIST) {
+        tx.commit();
+        c->err = -1;
+        snprintf(c->errmsg, sizeof(c->errmsg), 
+            "WRONGTYPE Operation against a key holding the wrong kind of "
+            "value");
+        return 0;
+      }
+    }
   }
 
   ListIndex index;
+  index.entries = NULL;
+  index.len = 0;
   bool headSegFull = false;
   uint64_t totalElements = 0;
-  if (listExists && indexValue.size() != 0) {
+  if (objectExists && rootValue.size() > sizeof(struct ObjectMetadata)) {
     index.entries = static_cast<ListIndexEntry*>(
-        indexValue.getRange(0, indexValue.size()));  
-    index.len = indexValue.size() / sizeof(ListIndexEntry);
+        rootValue.getRange(sizeof(struct ObjectMetadata), 
+          rootValue.size() - sizeof(struct ObjectMetadata)));  
+    index.len = (rootValue.size() - sizeof(struct ObjectMetadata)) 
+        / sizeof(ListIndexEntry);
 
     if (index.entries[0].segSizeKb >= MAX_LIST_SEG_SIZE_KB) {
       headSegFull = true;
@@ -203,12 +254,12 @@ uint64_t lpush(Context* c, Object* key, Object* value) {
 
   RAMCloud::Buffer segKey;
   RAMCloud::Buffer newSegValue;
-  RAMCloud::Buffer newIndexValue;
-  if (!listExists || indexValue.size() == 0 || headSegFull) {
+  RAMCloud::Buffer newRootValue;
+  if (!objectExists || index.len == 0 || headSegFull) {
     /* If the list doesn't exist, or the index is empty, or the head segment is
      * full, then create a new head segment. */
     int16_t newSegId;
-    if (!listExists || indexValue.size() == 0) {
+    if (!objectExists || index.len == 0) {
       newSegId = 0;
     } else {
       newSegId = index.entries[0].segId + 1;
@@ -239,9 +290,22 @@ uint64_t lpush(Context* c, Object* key, Object* value) {
     entry.elemCount = 1;
     entry.segSizeKb = (uint8_t)(newSegValue.size() >> 10);
 
-    newIndexValue.append((void*)&entry, sizeof(ListIndexEntry));
-    if (listExists && indexValue.size() != 0) {
-      newIndexValue.append(&indexValue);
+    if (!objectExists) {
+      /* Append new metadata header. */
+      struct ObjectMetadata newObjMtd;
+      newObjMtd.type = REDIS_LIST;
+      newRootValue.appendCopy((void*)&newObjMtd, sizeof(struct
+            ObjectMetadata));
+    } else {
+      /* Append existing metadata header. */
+      newRootValue.append((void*)objMtd, sizeof(struct ObjectMetadata));
+    }
+
+    newRootValue.append((void*)&entry, sizeof(ListIndexEntry));
+
+    if (index.len > 0) {
+      newRootValue.append((void*)index.entries, 
+          index.len * sizeof(ListIndexEntry)); 
     }
   } else if (index.entries[0].elemCount == 0) {
     /* The list exists, the index is not empty, but the head segment is empty.
@@ -259,8 +323,9 @@ uint64_t lpush(Context* c, Object* key, Object* value) {
 
     index.entries[0].elemCount = 1;
     index.entries[0].segSizeKb = (uint8_t)(newSegValue.size() >> 10);
-
-    newIndexValue.append(index.entries, index.len*sizeof(ListIndexEntry));
+      
+    newRootValue.append((void*)objMtd, sizeof(struct ObjectMetadata));
+    newRootValue.append(index.entries, index.len*sizeof(ListIndexEntry));
   } else {
     /* The list exists, the index is not empty, and the head segment is neither
      * full nor totally empty. In this case we need to read the head segment
@@ -306,7 +371,8 @@ uint64_t lpush(Context* c, Object* key, Object* value) {
     index.entries[0].elemCount++;
     index.entries[0].segSizeKb = (uint8_t)(newSegValue.size() >> 10);
 
-    newIndexValue.append(index.entries, index.len*sizeof(ListIndexEntry));
+    newRootValue.append((void*)objMtd, sizeof(struct ObjectMetadata));
+    newRootValue.append(index.entries, index.len*sizeof(ListIndexEntry));
   }
 
   tx.write(c->tableId,
@@ -318,8 +384,8 @@ uint64_t lpush(Context* c, Object* key, Object* value) {
   tx.write(c->tableId, 
       rootKey.getRange(0, rootKey.size()), 
       rootKey.size(), 
-      newIndexValue.getRange(0, newIndexValue.size()),
-      newIndexValue.size());
+      newRootValue.getRange(0, newRootValue.size()),
+      newRootValue.size());
 
   tx.commit();
 
@@ -335,24 +401,54 @@ uint64_t rpush(Context* c, Object* key, Object* value) {
   appendKeyComponent(&rootKey, (char*)key->data, key->len);
 
   /* Read the index. */
-  RAMCloud::Buffer indexValue;
-  bool listExists = true;
+  RAMCloud::Buffer rootValue;
+  bool objectExists = true;
   try {
     tx.read(c->tableId, 
         rootKey.getRange(0, rootKey.size()), 
         rootKey.size(), 
-        &indexValue);
+        &rootValue);
   } catch (RAMCloud::ObjectDoesntExistException& e) {
-    listExists = false;
+    objectExists = false;
+  }
+
+  /* Sanity checks:
+   * 1) If the object exists it should have metadata.
+   * 2) If the object exists it should be of the correct data type. */
+  struct ObjectMetadata* objMtd = NULL;
+  if (objectExists) {
+    if (rootValue.size() < sizeof(struct ObjectMetadata)) {
+      tx.commit();
+      ERROR("Data structure malformed. This is a bug.\n");
+      DEBUG("Object exists but is missing its metadata.\n");
+      c->err = -1;
+      snprintf(c->errmsg, sizeof(c->errmsg), 
+          "Data structure malformed. This is a bug.");
+      return 0;
+    } else {
+      objMtd = rootValue.getOffset<struct ObjectMetadata>(0);
+      if (objMtd->type != REDIS_LIST) {
+        tx.commit();
+        c->err = -1;
+        snprintf(c->errmsg, sizeof(c->errmsg), 
+            "WRONGTYPE Operation against a key holding the wrong kind of "
+            "value");
+        return 0;
+      }
+    }
   }
 
   ListIndex index;
+  index.entries = NULL;
+  index.len = 0;
   bool tailSegFull = false;
   uint64_t totalElements = 0;
-  if (listExists && indexValue.size() != 0) {
+  if (objectExists && rootValue.size() > sizeof(struct ObjectMetadata)) {
     index.entries = static_cast<ListIndexEntry*>(
-        indexValue.getRange(0, indexValue.size()));  
-    index.len = indexValue.size() / sizeof(ListIndexEntry);
+        rootValue.getRange(sizeof(struct ObjectMetadata), 
+          rootValue.size() - sizeof(struct ObjectMetadata)));  
+    index.len = (rootValue.size() - sizeof(struct ObjectMetadata)) 
+        / sizeof(ListIndexEntry);
 
     if (index.entries[index.len - 1].segSizeKb >= MAX_LIST_SEG_SIZE_KB) {
       tailSegFull = true;
@@ -365,12 +461,12 @@ uint64_t rpush(Context* c, Object* key, Object* value) {
 
   RAMCloud::Buffer segKey;
   RAMCloud::Buffer newSegValue;
-  RAMCloud::Buffer newIndexValue;
-  if (!listExists || indexValue.size() == 0 || tailSegFull) {
+  RAMCloud::Buffer newRootValue;
+  if (!objectExists || index.len == 0 || tailSegFull) {
     /* If the list doesn't exist, or the index is empty, or the tail segment is
      * full, then create a new head segment. */
     int16_t newSegId;
-    if (!listExists || indexValue.size() == 0) {
+    if (!objectExists || index.len == 0) {
       newSegId = 0;
     } else {
       newSegId = index.entries[index.len - 1].segId - 1;
@@ -401,15 +497,29 @@ uint64_t rpush(Context* c, Object* key, Object* value) {
     entry.elemCount = 1;
     entry.segSizeKb = (uint8_t)(newSegValue.size() >> 10);
 
-    if (listExists && indexValue.size() != 0) {
-      newIndexValue.append(&indexValue);
+    if (!objectExists) {
+      /* Append new metadata header. */
+      struct ObjectMetadata newObjMtd;
+      newObjMtd.type = REDIS_LIST;
+      newRootValue.appendCopy((void*)&newObjMtd, sizeof(struct
+            ObjectMetadata));
+    } else {
+      /* Append existing metadata header. */
+      newRootValue.append((void*)objMtd, sizeof(struct ObjectMetadata));
     }
-    newIndexValue.append((void*)&entry, sizeof(ListIndexEntry));
+
+    if (index.len > 0) {
+      newRootValue.append((void*)index.entries, 
+          index.len * sizeof(ListIndexEntry)); 
+    }
+
+    newRootValue.append((void*)&entry, sizeof(ListIndexEntry));
   } else if (index.entries[index.len - 1].elemCount == 0) {
     /* The list exists, the index is not empty, but the tail segment is empty.
      * In this case we don't need to read the tail segment to add the new
      * value, we can just write the new tail segment directly for lower
      * latency. */
+
     segKey.append(&rootKey);
     appendKeyComponent(&segKey, (char*)&index.entries[index.len - 1].segId, 
         sizeof(int16_t));
@@ -422,11 +532,13 @@ uint64_t rpush(Context* c, Object* key, Object* value) {
     index.entries[index.len - 1].segSizeKb = 
         (uint8_t)(newSegValue.size() >> 10);
 
-    newIndexValue.append(index.entries, index.len*sizeof(ListIndexEntry));
+    newRootValue.append((void*)objMtd, sizeof(struct ObjectMetadata));
+    newRootValue.append(index.entries, index.len*sizeof(ListIndexEntry));
   } else {
     /* The list exists, the index is not empty, and the tail segment is neither
      * full nor totally empty. In this case we need to read the tail segment
      * and add the new value to it. */
+
     segKey.append(&rootKey);
     appendKeyComponent(&segKey, (char*)&index.entries[index.len - 1].segId, 
         sizeof(int16_t));
@@ -468,7 +580,8 @@ uint64_t rpush(Context* c, Object* key, Object* value) {
     index.entries[index.len - 1].segSizeKb = 
         (uint8_t)(newSegValue.size() >> 10);
 
-    newIndexValue.append(index.entries, index.len*sizeof(ListIndexEntry));
+    newRootValue.append((void*)objMtd, sizeof(struct ObjectMetadata));
+    newRootValue.append(index.entries, index.len*sizeof(ListIndexEntry));
   }
 
   tx.write(c->tableId,
@@ -480,8 +593,8 @@ uint64_t rpush(Context* c, Object* key, Object* value) {
   tx.write(c->tableId, 
       rootKey.getRange(0, rootKey.size()), 
       rootKey.size(), 
-      newIndexValue.getRange(0, newIndexValue.size()),
-      newIndexValue.size());
+      newRootValue.getRange(0, newRootValue.size()),
+      newRootValue.size());
 
   tx.commit();
 
@@ -497,12 +610,12 @@ Object* lpop(Context* c, Object* key) {
   appendKeyComponent(&rootKey, (char*)key->data, key->len);
 
   /* Read the index. */
-  RAMCloud::Buffer indexValue;
+  RAMCloud::Buffer rootValue;
   try {
     tx.read(c->tableId, 
         rootKey.getRange(0, rootKey.size()), 
         rootKey.size(), 
-        &indexValue);
+        &rootValue);
   } catch (RAMCloud::ObjectDoesntExistException& e) {
     c->err = -1;
     snprintf(c->errmsg, sizeof(c->errmsg), 
@@ -510,7 +623,31 @@ Object* lpop(Context* c, Object* key) {
     return NULL;
   }
 
-  if (indexValue.size() == 0) {
+  /* Sanity checks:
+   * 1) If the object exists it should have metadata.
+   * 2) If the object exists it should be of the correct data type. */
+  struct ObjectMetadata* objMtd = NULL;
+  if (rootValue.size() < sizeof(struct ObjectMetadata)) {
+    tx.commit();
+    ERROR("Data structure malformed. This is a bug.\n");
+    DEBUG("Object exists but is missing its metadata.\n");
+    c->err = -1;
+    snprintf(c->errmsg, sizeof(c->errmsg), 
+        "Data structure malformed. This is a bug.");
+    return 0;
+  } else {
+    objMtd = rootValue.getOffset<struct ObjectMetadata>(0);
+    if (objMtd->type != REDIS_LIST) {
+      tx.commit();
+      c->err = -1;
+      snprintf(c->errmsg, sizeof(c->errmsg), 
+          "WRONGTYPE Operation against a key holding the wrong kind of "
+          "value");
+      return 0;
+    }
+  }
+
+  if (rootValue.size() == sizeof(struct ObjectMetadata)) {
     /* List exists but it's empty. */
     c->err = -1;
     snprintf(c->errmsg, sizeof(c->errmsg), 
@@ -521,12 +658,17 @@ Object* lpop(Context* c, Object* key) {
   ListIndex index;
   uint64_t totalElements = 0;
   index.entries = static_cast<ListIndexEntry*>(
-      indexValue.getRange(0, indexValue.size()));  
-  index.len = indexValue.size() / sizeof(ListIndexEntry);
+      rootValue.getRange(sizeof(struct ObjectMetadata), 
+        rootValue.size() - sizeof(struct ObjectMetadata)));  
+  index.len = (rootValue.size() - sizeof(struct ObjectMetadata)) 
+      / sizeof(ListIndexEntry);
 
   for (int i = 0; i < index.len; i++) {
     totalElements += index.entries[i].elemCount;
   }
+
+  RAMCloud::Buffer newRootValue;
+  newRootValue.append((void*)objMtd, sizeof(struct ObjectMetadata));
 
   if (totalElements == 0) {
     /* List index has entries but no elements in the list. In this case, reset
@@ -536,12 +678,14 @@ Object* lpop(Context* c, Object* key) {
       entry.segId = 0;
       entry.elemCount = 0;
       entry.segSizeKb = 0;
+      
+      newRootValue.append((void*)&entry, sizeof(ListIndexEntry));
 
       tx.write(c->tableId, 
           rootKey.getRange(0, rootKey.size()),
           rootKey.size(),
-          &entry,
-          sizeof(ListIndexEntry));
+          newRootValue.getRange(0, newRootValue.size()),
+          newRootValue.size());
 
       tx.commit();
     }
@@ -612,11 +756,13 @@ Object* lpop(Context* c, Object* key) {
           entry.elemCount = 0;
           entry.segSizeKb = 0;
 
+          newRootValue.append((void*)&entry, sizeof(ListIndexEntry));
+
           tx.write(c->tableId, 
               rootKey.getRange(0, rootKey.size()),
               rootKey.size(),
-              &entry,
-              sizeof(ListIndexEntry));
+              newRootValue.getRange(0, newRootValue.size()),
+              newRootValue.size());
 
           tx.commit();
         } else {
@@ -624,11 +770,14 @@ Object* lpop(Context* c, Object* key) {
            * non-empty segment to be the head segment. */
           for (int j = i + 1; j < index.len; j++) {
             if (index.entries[j].elemCount > 0) {
+              newRootValue.append(&index.entries[j], 
+                  (index.len - j) * sizeof(ListIndexEntry));
+
               tx.write(c->tableId,
                   rootKey.getRange(0, rootKey.size()),
                   rootKey.size(),
-                  &index.entries[j],
-                  (index.len - j)*sizeof(ListIndexEntry));
+                  newRootValue.getRange(0, newRootValue.size()),
+                  newRootValue.size());
 
               tx.commit();
               break;
@@ -654,11 +803,14 @@ Object* lpop(Context* c, Object* key) {
         index.entries[i].elemCount--;
         index.entries[i].segSizeKb = (uint8_t)(newSegValue.size() >> 10);
 
+        newRootValue.append(&index.entries[i], 
+            (index.len - i)*sizeof(ListIndexEntry));
+
         tx.write(c->tableId,
             rootKey.getRange(0, rootKey.size()),
             rootKey.size(),
-            &index.entries[i],
-            (index.len - i)*sizeof(ListIndexEntry));
+            newRootValue.getRange(0, newRootValue.size()),
+            newRootValue.size());
 
         tx.commit();
       }
@@ -677,12 +829,12 @@ Object* rpop(Context* c, Object* key) {
   appendKeyComponent(&rootKey, (char*)key->data, key->len);
 
   /* Read the index. */
-  RAMCloud::Buffer indexValue;
+  RAMCloud::Buffer rootValue;
   try {
     tx.read(c->tableId, 
         rootKey.getRange(0, rootKey.size()), 
         rootKey.size(), 
-        &indexValue);
+        &rootValue);
   } catch (RAMCloud::ObjectDoesntExistException& e) {
     c->err = -1;
     snprintf(c->errmsg, sizeof(c->errmsg), 
@@ -690,7 +842,31 @@ Object* rpop(Context* c, Object* key) {
     return NULL;
   }
 
-  if (indexValue.size() == 0) {
+  /* Sanity checks:
+   * 1) If the object exists it should have metadata.
+   * 2) If the object exists it should be of the correct data type. */
+  struct ObjectMetadata* objMtd = NULL;
+  if (rootValue.size() < sizeof(struct ObjectMetadata)) {
+    tx.commit();
+    ERROR("Data structure malformed. This is a bug.\n");
+    DEBUG("Object exists but is missing its metadata.\n");
+    c->err = -1;
+    snprintf(c->errmsg, sizeof(c->errmsg), 
+        "Data structure malformed. This is a bug.");
+    return 0;
+  } else {
+    objMtd = rootValue.getOffset<struct ObjectMetadata>(0);
+    if (objMtd->type != REDIS_LIST) {
+      tx.commit();
+      c->err = -1;
+      snprintf(c->errmsg, sizeof(c->errmsg), 
+          "WRONGTYPE Operation against a key holding the wrong kind of "
+          "value");
+      return 0;
+    }
+  }
+
+  if (rootValue.size() == sizeof(struct ObjectMetadata)) {
     /* List exists but it's empty. */
     c->err = -1;
     snprintf(c->errmsg, sizeof(c->errmsg), 
@@ -701,12 +877,17 @@ Object* rpop(Context* c, Object* key) {
   ListIndex index;
   uint64_t totalElements = 0;
   index.entries = static_cast<ListIndexEntry*>(
-      indexValue.getRange(0, indexValue.size()));  
-  index.len = indexValue.size() / sizeof(ListIndexEntry);
+      rootValue.getRange(sizeof(struct ObjectMetadata), 
+        rootValue.size() - sizeof(struct ObjectMetadata)));  
+  index.len = (rootValue.size() - sizeof(struct ObjectMetadata)) 
+      / sizeof(ListIndexEntry);
 
   for (int i = 0; i < index.len; i++) {
     totalElements += index.entries[i].elemCount;
   }
+
+  RAMCloud::Buffer newRootValue;
+  newRootValue.append((void*)objMtd, sizeof(struct ObjectMetadata));
 
   if (totalElements == 0) {
     /* List index has entries but no elements in the list. In this case, reset
@@ -717,11 +898,13 @@ Object* rpop(Context* c, Object* key) {
       entry.elemCount = 0;
       entry.segSizeKb = 0;
 
+      newRootValue.append((void*)&entry, sizeof(ListIndexEntry));
+
       tx.write(c->tableId, 
           rootKey.getRange(0, rootKey.size()),
           rootKey.size(),
-          &entry,
-          sizeof(ListIndexEntry));
+          newRootValue.getRange(0, newRootValue.size()),
+          newRootValue.size());
 
       tx.commit();
     }
@@ -792,11 +975,13 @@ Object* rpop(Context* c, Object* key) {
           entry.elemCount = 0;
           entry.segSizeKb = 0;
 
+          newRootValue.append((void*)&entry, sizeof(ListIndexEntry));
+
           tx.write(c->tableId, 
               rootKey.getRange(0, rootKey.size()),
               rootKey.size(),
-              &entry,
-              sizeof(ListIndexEntry));
+              newRootValue.getRange(0, newRootValue.size()),
+              newRootValue.size());
 
           tx.commit();
         } else {
@@ -804,11 +989,14 @@ Object* rpop(Context* c, Object* key) {
            * non-empty segment to be the tail segment. */
           for (int j = i - 1; j >= 0; j--) {
             if (index.entries[j].elemCount > 0) {
+              newRootValue.append(&index.entries[0], 
+                  (j + 1) * sizeof(ListIndexEntry));
+
               tx.write(c->tableId,
                   rootKey.getRange(0, rootKey.size()),
                   rootKey.size(),
-                  &index.entries[0],
-                  (j + 1)*sizeof(ListIndexEntry));
+                  newRootValue.getRange(0, newRootValue.size()),
+                  newRootValue.size());
 
               tx.commit();
               break;
@@ -836,11 +1024,14 @@ Object* rpop(Context* c, Object* key) {
         index.entries[i].elemCount--;
         index.entries[i].segSizeKb = (uint8_t)(newSegValue.size() >> 10);
 
+        newRootValue.append(&index.entries[0], 
+            (i + 1)*sizeof(ListIndexEntry));
+
         tx.write(c->tableId,
             rootKey.getRange(0, rootKey.size()),
             rootKey.size(),
-            &index.entries[0],
-            (i + 1)*sizeof(ListIndexEntry));
+            newRootValue.getRange(0, newRootValue.size()),
+            newRootValue.size());
 
         tx.commit();
       }
@@ -859,18 +1050,44 @@ ObjectArray* lrange(Context* c, Object* key, long start, long end) {
   appendKeyComponent(&rootKey, (char*)key->data, key->len);
 
   /* Read the index. */
-  RAMCloud::Buffer indexValue;
-  bool listExists = true;
+  RAMCloud::Buffer rootValue;
+  bool objectExists = true;
   try {
     tx.read(c->tableId, 
         rootKey.getRange(0, rootKey.size()), 
         rootKey.size(), 
-        &indexValue);
+        &rootValue);
   } catch (RAMCloud::ObjectDoesntExistException& e) {
-    listExists = false;
+    objectExists = false;
   }
 
-  if (!listExists) {
+  /* Sanity checks:
+   * 1) If the object exists it should have metadata.
+   * 2) If the object exists it should be of the correct data type. */
+  struct ObjectMetadata* objMtd = NULL;
+  if (objectExists) {
+    if (rootValue.size() < sizeof(struct ObjectMetadata)) {
+      tx.commit();
+      ERROR("Data structure malformed. This is a bug.\n");
+      DEBUG("Object exists but is missing its metadata.\n");
+      c->err = -1;
+      snprintf(c->errmsg, sizeof(c->errmsg), 
+          "Data structure malformed. This is a bug.");
+      return 0;
+    } else {
+      objMtd = rootValue.getOffset<struct ObjectMetadata>(0);
+      if (objMtd->type != REDIS_LIST) {
+        tx.commit();
+        c->err = -1;
+        snprintf(c->errmsg, sizeof(c->errmsg), 
+            "WRONGTYPE Operation against a key holding the wrong kind of "
+            "value");
+        return 0;
+      }
+    }
+  }
+
+  if (!objectExists) {
     tx.commit();
 
     c->err = -1;
@@ -878,7 +1095,25 @@ ObjectArray* lrange(Context* c, Object* key, long start, long end) {
         "Unknown key");
     
     return NULL;
-  } else if (indexValue.size() == 0) {
+  } 
+  
+  ListIndex index;
+  index.entries = NULL;
+  index.len = 0;
+  uint64_t totalElements = 0;
+  if (rootValue.size() > sizeof(struct ObjectMetadata)) {
+    index.entries = static_cast<ListIndexEntry*>(
+        rootValue.getRange(sizeof(struct ObjectMetadata), 
+          rootValue.size() - sizeof(struct ObjectMetadata)));  
+    index.len = (rootValue.size() - sizeof(struct ObjectMetadata)) 
+        / sizeof(ListIndexEntry);
+
+    for (int i = 0; i < index.len; i++) {
+      totalElements += index.entries[i].elemCount;
+    }
+  }
+  
+  if (index.len == 0) {
     tx.commit();
 
     ObjectArray* objArray = (ObjectArray*)malloc(sizeof(ObjectArray));
@@ -887,16 +1122,6 @@ ObjectArray* lrange(Context* c, Object* key, long start, long end) {
 
     return objArray;
   } else {
-    ListIndex index;
-    index.entries = static_cast<ListIndexEntry*>(
-        indexValue.getRange(0, indexValue.size()));  
-    index.len = indexValue.size() / sizeof(ListIndexEntry);
-
-    long totalElements = 0;
-    for (int i = 0; i < index.len; i++) {
-      totalElements += index.entries[i].elemCount;
-    }
-
     uint64_t rangeStart, rangeEnd;
     if (start < 0) {
       if (totalElements + start < 0) {
