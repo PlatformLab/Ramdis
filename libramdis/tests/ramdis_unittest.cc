@@ -158,6 +158,7 @@ TEST(LpopTest, popManyValues) {
   for (uint32_t i = 0; i < totalElements; i++) {
     sprintf(valBuf, "%07d", totalElements - i - 1);
     Object* obj = lpop(context, &key);
+    EXPECT_EQ(0, context->err);
     EXPECT_STREQ(valBuf, (char*)obj->data);
     freeObject(obj);
   }
@@ -200,6 +201,7 @@ TEST(RpopTest, popManyValues) {
   for (uint32_t i = 0; i < totalElements; i++) {
     sprintf(valBuf, "%07d", i);
     Object* obj = rpop(context, &key);
+    EXPECT_EQ(0, context->err);
     EXPECT_STREQ(valBuf, (char*)obj->data);
     freeObject(obj);
   }
