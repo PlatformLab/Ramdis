@@ -10,3 +10,6 @@
 [submodule "googletest"]
 	path = googletest
 	url = git@github.com:google/googletest.git
+[submodule "RAMCloud"]
+	path = RAMCloud
+	url = git@github.com:PlatformLab/RAMCloud.git
