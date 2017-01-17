@@ -35,6 +35,8 @@ const char USAGE[] =
 "  -t <tests>          Comma separated list of tests to run. Available \n"
 "                      tests: all, get, set, incr, lpush, rpush, lpop, \n"
 "                      rpop, sadd, spop, lrange, mset. [default: all]\n"
+"  --outputDir <dir>   Directory to write performance data. If not \n"
+"                      specified then no files will be written. \n"
 "  -h --help           Show this screen.\n"
 "  --version           Show version.\n"
 "\n"
@@ -72,9 +74,9 @@ void freeWorkerStats(struct WorkerStats* wStats) {
   free(wStats);
 }
 
-void reportStats(uint64_t totalTime, struct WorkerStats** wStats, 
+void reportStats(char* test, uint64_t totalTime, struct WorkerStats** wStats, 
     uint64_t clientIndex, uint64_t numClients, uint64_t clientThreads,  
-    uint64_t requests) {
+    uint64_t requests, char* outputDir) {
   uint64_t i;
   for (i = 0; i < clientThreads; i++) {
     qsort(wStats[i]->latencies, requests, sizeof(uint64_t), compareUint64_t);
@@ -104,6 +106,35 @@ void reportStats(uint64_t totalTime, struct WorkerStats** wStats,
         wStats[i]->latencies[requests*99/100]);
     printf("\tp99.9 Latency: %" PRId64 "us\n", 
         wStats[i]->latencies[requests*999/1000]);
+  }
+
+  /* Write performance data to files. */
+  if (outputDir != NULL) {
+    for (i = 0; i < clientThreads; i++) {
+      uint64_t threadIndex = clientIndex * clientThreads + i + 1;
+      uint64_t numThreads = numClients * clientThreads;
+      
+      char reqLatFN[256];
+      snprintf(reqLatFN, sizeof(reqLatFN), 
+          "%s/%s_client%d-%d_reqLatencies.dat", 
+          outputDir, test, numThreads, threadIndex);
+      
+      FILE *reqLatFile = fopen(reqLatFN, "w");
+      
+      if (reqLatFile == NULL) {
+        printf("ERROR: Can't open output file %s\n", reqLatFN);
+        continue;
+      }
+
+      printf("Writing data file: %s\n", reqLatFN);
+
+      uint64_t j;
+      for (j = 0; j < requests; j++) {
+        fprintf(reqLatFile, "%" PRId64 "\n", wStats[i]->latencies[j]);
+      }
+
+      fclose(reqLatFile);
+    }
   }
 }
 
@@ -482,6 +513,7 @@ int main(int argc, char* argv[]) {
   uint64_t lrangeSize = 100;
   uint64_t keySpaceLength = 1;
   char* tests = "all";
+  char* outputDir = NULL;
 
   // Parse command line options.
   uint64_t i;
@@ -495,7 +527,7 @@ int main(int argc, char* argv[]) {
     } else if (strcmp(argv[i], "--numClients") == 0) {
       numClients = strtoul(argv[i+1], NULL, 10);
       i+=2;
-    } else if (strcmp(argv[i], "-c") == 0) {
+    } else if (strcmp(argv[i], "--threads") == 0) {
       clientThreads = strtoul(argv[i+1], NULL, 10);
       i+=2;
     } else if (strcmp(argv[i], "-n") == 0) {
@@ -512,6 +544,9 @@ int main(int argc, char* argv[]) {
       i+=2;
     } else if (strcmp(argv[i], "-t") == 0) {
       tests = argv[i+1];
+      i+=2;
+    } else if (strcmp(argv[i], "--outputDir") == 0) {
+      outputDir = argv[i+1];
       i+=2;
     } else if (strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0) {
       printf("%s", USAGE);
@@ -702,8 +737,8 @@ int main(int argc, char* argv[]) {
     }
     uint64_t end = ustime();
 
-    reportStats(end - start, wStats, clientIndex, numClients, clientThreads, 
-        requests);
+    reportStats(test, end - start, wStats, clientIndex, numClients, 
+        clientThreads, requests, outputDir);
 
     for (i = 0; i < clientThreads; i++) {
       freeWorkerStats(wStats[i]);
