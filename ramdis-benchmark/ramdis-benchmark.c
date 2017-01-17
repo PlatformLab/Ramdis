@@ -37,6 +37,8 @@ const char USAGE[] =
 "                      rpop, sadd, spop, lrange, mset. [default: all]\n"
 "  --outputDir <dir>   Directory to write performance data. If not \n"
 "                      specified then no files will be written. \n"
+"  --logFile <file>    File to use for log messages. If not specified then \n"
+"                      log messages are printed to the screen.\n"
 "  -h --help           Show this screen.\n"
 "  --version           Show version.\n"
 "\n"
@@ -63,6 +65,7 @@ struct WorkerArgs {
   uint64_t valueSize;
   uint64_t lrangeSize;
   uint64_t keySpaceLength;
+  FILE* outputFile;
 };
 
 struct WorkerStats {
@@ -76,35 +79,35 @@ void freeWorkerStats(struct WorkerStats* wStats) {
 
 void reportStats(char* test, uint64_t totalTime, struct WorkerStats** wStats, 
     uint64_t clientIndex, uint64_t numClients, uint64_t clientThreads,  
-    uint64_t requests, char* outputDir) {
+    uint64_t requests, char* outputDir, FILE* outputFile) {
   uint64_t i;
   for (i = 0; i < clientThreads; i++) {
     qsort(wStats[i]->latencies, requests, sizeof(uint64_t), compareUint64_t);
   }
 
   if (totalTime / 1000000 > 0) {
-    printf("Total Time: %.2fs\n", (float)totalTime / 1000000.0);
+    fprintf(outputFile, "Total Time: %.2fs\n", (float)totalTime / 1000000.0);
   } else if (totalTime / 1000 > 0) {
-    printf("Total Time: %.2fms\n", (float)totalTime / 1000.0);
+    fprintf(outputFile, "Total Time: %.2fms\n", (float)totalTime / 1000.0);
   } else {
-    printf("Total Time: %" PRId64 "us\n", totalTime);
+    fprintf(outputFile, "Total Time: %" PRId64 "us\n", totalTime);
   }
 
-  printf("Average Request Rate: %.2f op/s\n", 
+  fprintf(outputFile, "Average Request Rate: %.2f op/s\n", 
       (float)(requests * clientThreads) / ((float)totalTime / 1000000.0));
 
   for (i = 0; i < clientThreads; i++) {
-    printf("Client %d/%d Stats:\n", clientIndex * clientThreads + i + 1, 
+    fprintf(outputFile, "Client %d/%d Stats:\n", clientIndex * clientThreads + i + 1, 
         numClients * clientThreads);
-    printf("\tp50 Latency: %" PRId64 "us\n", 
+    fprintf(outputFile, "\tp50 Latency: %" PRId64 "us\n", 
         wStats[i]->latencies[requests/2]);
-    printf("\tp90 Latency: %" PRId64 "us\n", 
+    fprintf(outputFile, "\tp90 Latency: %" PRId64 "us\n", 
         wStats[i]->latencies[requests*90/100]);
-    printf("\tp95 Latency: %" PRId64 "us\n", 
+    fprintf(outputFile, "\tp95 Latency: %" PRId64 "us\n", 
         wStats[i]->latencies[requests*95/100]);
-    printf("\tp99 Latency: %" PRId64 "us\n", 
+    fprintf(outputFile, "\tp99 Latency: %" PRId64 "us\n", 
         wStats[i]->latencies[requests*99/100]);
-    printf("\tp99.9 Latency: %" PRId64 "us\n", 
+    fprintf(outputFile, "\tp99.9 Latency: %" PRId64 "us\n", 
         wStats[i]->latencies[requests*999/1000]);
   }
 
@@ -122,11 +125,11 @@ void reportStats(char* test, uint64_t totalTime, struct WorkerStats** wStats,
       FILE *reqLatFile = fopen(reqLatFN, "w");
       
       if (reqLatFile == NULL) {
-        printf("ERROR: Can't open output file %s\n", reqLatFN);
+        fprintf(stderr, "ERROR: Can't open output file %s\n", reqLatFN);
         continue;
       }
 
-      printf("Writing data file: %s\n", reqLatFN);
+      fprintf(outputFile, "Writing data file: %s\n", reqLatFN);
 
       uint64_t j;
       for (j = 0; j < requests; j++) {
@@ -143,11 +146,11 @@ void reportStats(char* test, uint64_t totalTime, struct WorkerStats** wStats,
       FILE *execSumFile = fopen(execSumFN, "w");
       
       if (execSumFile == NULL) {
-        printf("ERROR: Can't open output file %s\n", execSumFN);
+        fprintf(stderr, "ERROR: Can't open output file %s\n", execSumFN);
         continue;
       }
 
-      printf("Writing data file: %s\n", execSumFN);
+      fprintf(outputFile, "Writing data file: %s\n", execSumFN);
 
       /* Total run time in seconds. */
       fprintf(execSumFile, "totalTime %.2f\n", (float)totalTime / 1000000.0);
@@ -165,6 +168,7 @@ void* getWorkerThread(void* args) {
   uint64_t requests = wArgs->requests;
   uint64_t valueSize = wArgs->valueSize;
   uint64_t keySpaceLength = wArgs->keySpaceLength;
+  FILE* outputFile = wArgs->outputFile;
 
   Context* context = ramdis_connect(coordinatorLocator);
 
@@ -188,9 +192,11 @@ void* getWorkerThread(void* args) {
     latencies[i] = ustime() - reqStart;
     freeObject(value);
 
-    if (i % progressUnit == 0) {
-      printf("Progress: %3d%%\r", i*100/requests);
-      fflush(stdout);
+    if (outputFile == stdout) {
+      if (i % progressUnit == 0) {
+        printf("Progress: %3d%%\r", i*100/requests);
+        fflush(stdout);
+      }
     }
   }
   uint64_t testEnd = ustime(); 
@@ -209,6 +215,7 @@ void* setWorkerThread(void* args) {
   uint64_t requests = wArgs->requests;
   uint64_t valueSize = wArgs->valueSize;
   uint64_t keySpaceLength = wArgs->keySpaceLength;
+  FILE* outputFile = wArgs->outputFile;
 
   Context* context = ramdis_connect(coordinatorLocator);
 
@@ -237,9 +244,11 @@ void* setWorkerThread(void* args) {
     set(context, &key, &value);
     latencies[i] = ustime() - reqStart;
 
-    if (i % progressUnit == 0) {
-      printf("Progress: %3d%%\r", i*100/requests);
-      fflush(stdout);
+    if (outputFile == stdout) {
+      if (i % progressUnit == 0) {
+        printf("Progress: %3d%%\r", i*100/requests);
+        fflush(stdout);
+      }
     }
   }
   uint64_t testEnd = ustime(); 
@@ -258,6 +267,7 @@ void* incrWorkerThread(void* args) {
   uint64_t requests = wArgs->requests;
   uint64_t valueSize = wArgs->valueSize;
   uint64_t keySpaceLength = wArgs->keySpaceLength;
+  FILE* outputFile = wArgs->outputFile;
 
   Context* context = ramdis_connect(coordinatorLocator);
 
@@ -280,9 +290,11 @@ void* incrWorkerThread(void* args) {
     incr(context, &key);
     latencies[i] = ustime() - reqStart;
 
-    if (i % progressUnit == 0) {
-      printf("Progress: %3d%%\r", i*100/requests);
-      fflush(stdout);
+    if (outputFile == stdout) {
+      if (i % progressUnit == 0) {
+        printf("Progress: %3d%%\r", i*100/requests);
+        fflush(stdout);
+      }
     }
   }
   uint64_t testEnd = ustime(); 
@@ -301,6 +313,7 @@ void* lpushWorkerThread(void* args) {
   uint64_t requests = wArgs->requests;
   uint64_t valueSize = wArgs->valueSize;
   uint64_t keySpaceLength = wArgs->keySpaceLength;
+  FILE* outputFile = wArgs->outputFile;
 
   Context* context = ramdis_connect(coordinatorLocator);
 
@@ -329,9 +342,11 @@ void* lpushWorkerThread(void* args) {
     lpush(context, &key, &value);
     latencies[i] = ustime() - reqStart;
 
-    if (i % progressUnit == 0) {
-      printf("Progress: %3d%%\r", i*100/requests);
-      fflush(stdout);
+    if (outputFile == stdout) {
+      if (i % progressUnit == 0) {
+        printf("Progress: %3d%%\r", i*100/requests);
+        fflush(stdout);
+      }
     }
   }
   uint64_t testEnd = ustime(); 
@@ -350,6 +365,7 @@ void* rpushWorkerThread(void* args) {
   uint64_t requests = wArgs->requests;
   uint64_t valueSize = wArgs->valueSize;
   uint64_t keySpaceLength = wArgs->keySpaceLength;
+  FILE* outputFile = wArgs->outputFile;
 
   Context* context = ramdis_connect(coordinatorLocator);
 
@@ -378,9 +394,11 @@ void* rpushWorkerThread(void* args) {
     rpush(context, &key, &value);
     latencies[i] = ustime() - reqStart;
 
-    if (i % progressUnit == 0) {
-      printf("Progress: %3d%%\r", i*100/requests);
-      fflush(stdout);
+    if (outputFile == stdout) {
+      if (i % progressUnit == 0) {
+        printf("Progress: %3d%%\r", i*100/requests);
+        fflush(stdout);
+      }
     }
   }
   uint64_t testEnd = ustime(); 
@@ -399,6 +417,7 @@ void* lpopWorkerThread(void* args) {
   uint64_t requests = wArgs->requests;
   uint64_t valueSize = wArgs->valueSize;
   uint64_t keySpaceLength = wArgs->keySpaceLength;
+  FILE* outputFile = wArgs->outputFile;
 
   Context* context = ramdis_connect(coordinatorLocator);
 
@@ -421,9 +440,11 @@ void* lpopWorkerThread(void* args) {
     lpop(context, &key);
     latencies[i] = ustime() - reqStart;
 
-    if (i % progressUnit == 0) {
-      printf("Progress: %3d%%\r", i*100/requests);
-      fflush(stdout);
+    if (outputFile == stdout) {
+      if (i % progressUnit == 0) {
+        printf("Progress: %3d%%\r", i*100/requests);
+        fflush(stdout);
+      }
     }
   }
   uint64_t testEnd = ustime(); 
@@ -442,6 +463,7 @@ void* rpopWorkerThread(void* args) {
   uint64_t requests = wArgs->requests;
   uint64_t valueSize = wArgs->valueSize;
   uint64_t keySpaceLength = wArgs->keySpaceLength;
+  FILE* outputFile = wArgs->outputFile;
 
   Context* context = ramdis_connect(coordinatorLocator);
 
@@ -464,9 +486,11 @@ void* rpopWorkerThread(void* args) {
     rpop(context, &key);
     latencies[i] = ustime() - reqStart;
 
-    if (i % progressUnit == 0) {
-      printf("Progress: %3d%%\r", i*100/requests);
-      fflush(stdout);
+    if (outputFile == stdout) {
+      if (i % progressUnit == 0) {
+        printf("Progress: %3d%%\r", i*100/requests);
+        fflush(stdout);
+      }
     }
   }
   uint64_t testEnd = ustime(); 
@@ -486,6 +510,7 @@ void* lrangeWorkerThread(void* args) {
   uint64_t valueSize = wArgs->valueSize;
   uint64_t lrangeSize = wArgs->lrangeSize;
   uint64_t keySpaceLength = wArgs->keySpaceLength;
+  FILE* outputFile = wArgs->outputFile;
 
   Context* context = ramdis_connect(coordinatorLocator);
 
@@ -509,9 +534,11 @@ void* lrangeWorkerThread(void* args) {
     latencies[i] = ustime() - reqStart;
     freeObjectArray(objArray);
 
-    if (i % progressUnit == 0) {
-      printf("Progress: %3d%%\r", i*100/requests);
-      fflush(stdout);
+    if (outputFile == stdout) {
+      if (i % progressUnit == 0) {
+        printf("Progress: %3d%%\r", i*100/requests);
+        fflush(stdout);
+      }
     }
   }
   uint64_t testEnd = ustime(); 
@@ -534,6 +561,7 @@ int main(int argc, char* argv[]) {
   uint64_t keySpaceLength = 1;
   char* tests = "all";
   char* outputDir = NULL;
+  char* logFile = NULL;
 
   // Parse command line options.
   uint64_t i;
@@ -568,6 +596,9 @@ int main(int argc, char* argv[]) {
     } else if (strcmp(argv[i], "--outputDir") == 0) {
       outputDir = argv[i+1];
       i+=2;
+    } else if (strcmp(argv[i], "--logFile") == 0) {
+      logFile = argv[i+1];
+      i+=2;
     } else if (strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0) {
       printf("%s", USAGE);
       return 0;
@@ -580,7 +611,18 @@ int main(int argc, char* argv[]) {
     }
   }
 
-  printf("Connecting to %s\n", coordinatorLocator);
+  FILE* outputFile;
+  if (logFile != NULL) {
+    outputFile = fopen(logFile, "w");
+    if (outputFile == NULL) {
+      fprintf(stderr, "ERROR: Can't open output file: %s\n", logFile);
+      return;
+    }
+  } else {
+    outputFile = stdout;
+  }
+
+  fprintf(outputFile, "Connecting to %s\n", coordinatorLocator);
 
   Context* context = ramdis_connect(coordinatorLocator);
 
@@ -590,11 +632,12 @@ int main(int argc, char* argv[]) {
   wArgs.valueSize = valueSize;
   wArgs.lrangeSize = lrangeSize;
   wArgs.keySpaceLength = keySpaceLength;
+  wArgs.outputFile = outputFile;
 
   char* test;
   test = strtok(tests, ",");
   while (test != NULL ) {
-    printf("========== %s ==========\n", test);
+    fprintf(outputFile, "========== %s ==========\n", test);
 
     void* (*workerThreadFuncPtr)();  
 
@@ -602,8 +645,8 @@ int main(int argc, char* argv[]) {
       workerThreadFuncPtr = getWorkerThread;
 
       /* Do pre-workload setup. */
-      printf("Doing pre-workload setup... ");
-      fflush(stdout);
+      fprintf(outputFile, "Doing pre-workload setup... ");
+      fflush(outputFile);
 
       Object value;
       char valBuf[valueSize];
@@ -621,15 +664,15 @@ int main(int argc, char* argv[]) {
         set(context, &key, &value);
       }
 
-      printf("Done\n");
+      fprintf(outputFile, "Done\n");
     } else if (strcmp(test, "set") == 0) {
       workerThreadFuncPtr = setWorkerThread;
     } else if (strcmp(test, "incr") == 0) {
       workerThreadFuncPtr = incrWorkerThread;
 
       /* Do pre-workload setup. */
-      printf("Doing pre-workload setup... ");
-      fflush(stdout);
+      fprintf(outputFile, "Doing pre-workload setup... ");
+      fflush(outputFile);
 
       Object value;
       uint64_t initialNumber = 0;
@@ -647,7 +690,7 @@ int main(int argc, char* argv[]) {
         set(context, &key, &value);
       }
 
-      printf("Done\n");
+      fprintf(outputFile, "Done\n");
     } else if (strcmp(test, "lpush") == 0) {
       workerThreadFuncPtr = lpushWorkerThread;
     } else if (strcmp(test, "rpush") == 0) {
@@ -656,8 +699,8 @@ int main(int argc, char* argv[]) {
       workerThreadFuncPtr = lpopWorkerThread;
 
       /* Do pre-workload setup. */
-      printf("Doing pre-workload setup... ");
-      fflush(stdout);
+      fprintf(outputFile, "Doing pre-workload setup... ");
+      fflush(outputFile);
 
       Object value;
       char valBuf[valueSize];
@@ -678,13 +721,13 @@ int main(int argc, char* argv[]) {
         }
       }
 
-      printf("Done\n");
+      fprintf(outputFile, "Done\n");
     } else if (strcmp(test, "rpop") == 0) {
       workerThreadFuncPtr = rpopWorkerThread;
 
       /* Do pre-workload setup. */
-      printf("Doing pre-workload setup... ");
-      fflush(stdout);
+      fprintf(outputFile, "Doing pre-workload setup... ");
+      fflush(outputFile);
 
       Object value;
       char valBuf[valueSize];
@@ -705,19 +748,19 @@ int main(int argc, char* argv[]) {
         }
       }
 
-      printf("Done\n");
+      fprintf(outputFile, "Done\n");
     } else if (strcmp(test, "sadd") == 0) {
-      printf("Test not yet implemented: %s\n", test);
+      fprintf(outputFile, "Test not yet implemented: %s\n", test);
       return -1;
     } else if (strcmp(test, "spop") == 0) {
-      printf("Test not yet implemented: %s\n", test);
+      fprintf(outputFile, "Test not yet implemented: %s\n", test);
       return -1;
     } else if (strcmp(test, "lrange") == 0) {
       workerThreadFuncPtr = lrangeWorkerThread;
 
       /* Do pre-workload setup. */
-      printf("Doing pre-workload setup... ");
-      fflush(stdout);
+      fprintf(outputFile, "Doing pre-workload setup... ");
+      fflush(outputFile);
 
       Object value;
       char valBuf[valueSize];
@@ -738,10 +781,10 @@ int main(int argc, char* argv[]) {
         }
       }
 
-      printf("Done\n");
+      fprintf(outputFile, "Done\n");
     } else if (strcmp(test, "mset") == 0) {
     } else {
-      printf("Unrecognized test: %s\n", test);
+      fprintf(outputFile, "Unrecognized test: %s\n", test);
       return -1;
     }
 
@@ -758,7 +801,7 @@ int main(int argc, char* argv[]) {
     uint64_t end = ustime();
 
     reportStats(test, end - start, wStats, clientIndex, numClients, 
-        clientThreads, requests, outputDir);
+        clientThreads, requests, outputDir, outputFile);
 
     for (i = 0; i < clientThreads; i++) {
       freeWorkerStats(wStats[i]);
