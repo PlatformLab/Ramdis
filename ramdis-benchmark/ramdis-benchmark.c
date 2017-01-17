@@ -134,6 +134,26 @@ void reportStats(char* test, uint64_t totalTime, struct WorkerStats** wStats,
       }
 
       fclose(reqLatFile);
+
+      char execSumFN[256];
+      snprintf(execSumFN, sizeof(execSumFN), 
+          "%s/%s_client%d-%d_execSummary.dat", 
+          outputDir, test, numThreads, threadIndex);
+      
+      FILE *execSumFile = fopen(execSumFN, "w");
+      
+      if (execSumFile == NULL) {
+        printf("ERROR: Can't open output file %s\n", execSumFN);
+        continue;
+      }
+
+      printf("Writing data file: %s\n", execSumFN);
+
+      /* Total run time in seconds. */
+      fprintf(execSumFile, "totalTime %.2f\n", (float)totalTime / 1000000.0);
+      fprintf(execSumFile, "totalOps %" PRId64 "\n", requests);
+
+      fclose(execSumFile);
     }
   }
 }
