@@ -19,7 +19,7 @@ const char USAGE[] =
 "\n"
 "Options:\n"
 "  -C <coordinator>    Address of RAMCloud coordinator.\n"
-"  -c <clients>        Number of benchmark clients to run in parallel \n"
+"  --threads <n>       Number of benchmark client threads to run in parallel\n"
 "                      [default: 1]\n"
 "  -n <requests>       Number of requests each client should execute \n"
 "                      [default: 100000]\n"
@@ -469,7 +469,7 @@ void* lrangeWorkerThread(void* args) {
 
 int main(int argc, char* argv[]) {
   char* coordinatorLocator;
-  uint64_t clients = 1;
+  uint64_t clientThreads = 1;
   uint64_t requests = 100000;
   uint64_t valueSize = 3;
   uint64_t lrangeSize = 100;
@@ -483,7 +483,7 @@ int main(int argc, char* argv[]) {
       coordinatorLocator = argv[i+1];
       i+=2;
     } else if (strcmp(argv[i], "-c") == 0) {
-      clients = strtoul(argv[i+1], NULL, 10);
+      clientThreads = strtoul(argv[i+1], NULL, 10);
       i+=2;
     } else if (strcmp(argv[i], "-n") == 0) {
       requests = strtoul(argv[i+1], NULL, 10);
@@ -677,21 +677,21 @@ int main(int argc, char* argv[]) {
       return -1;
     }
 
-    pthread_t threads[clients];
+    pthread_t threads[clientThreads];
     uint64_t start = ustime();
-    for (i = 0; i < clients; i++) {
+    for (i = 0; i < clientThreads; i++) {
       pthread_create(&threads[i], NULL, workerThreadFuncPtr, &wArgs);
     }
     
-    struct WorkerStats* wStats[clients];
-    for (i = 0; i < clients; i++) {
+    struct WorkerStats* wStats[clientThreads];
+    for (i = 0; i < clientThreads; i++) {
       pthread_join(threads[i], (void*)&wStats[i]);
     }
     uint64_t end = ustime();
 
-    reportStats(end - start, wStats, clients, requests);
+    reportStats(end - start, wStats, clientThreads, requests);
 
-    for (i = 0; i < clients; i++) {
+    for (i = 0; i < clientThreads; i++) {
       freeWorkerStats(wStats[i]);
     }
 
