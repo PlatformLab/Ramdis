@@ -19,6 +19,9 @@ const char USAGE[] =
 "\n"
 "Options:\n"
 "  -C <coordinator>    Address of RAMCloud coordinator.\n"
+"  --clientIndex <i>   Index of this client (first client is 0) \n"
+"                      [default: 0].\n"
+"  --numClients <n>    Total number of clients running [default: 1].\n"
 "  --threads <n>       Number of benchmark client threads to run in parallel\n"
 "                      [default: 1]\n"
 "  -n <requests>       Number of requests each client should execute \n"
@@ -70,9 +73,10 @@ void freeWorkerStats(struct WorkerStats* wStats) {
 }
 
 void reportStats(uint64_t totalTime, struct WorkerStats** wStats, 
-    uint64_t clients,  uint64_t requests) {
+    uint64_t clientIndex, uint64_t numClients, uint64_t clientThreads,  
+    uint64_t requests) {
   uint64_t i;
-  for (i = 0; i < clients; i++) {
+  for (i = 0; i < clientThreads; i++) {
     qsort(wStats[i]->latencies, requests, sizeof(uint64_t), compareUint64_t);
   }
 
@@ -85,10 +89,11 @@ void reportStats(uint64_t totalTime, struct WorkerStats** wStats,
   }
 
   printf("Average Request Rate: %.2f op/s\n", 
-      (float)(requests * clients) / ((float)totalTime / 1000000.0));
+      (float)(requests * clientThreads) / ((float)totalTime / 1000000.0));
 
-  for (i = 0; i < clients; i++) {
-    printf("Client %d Stats:\n", i);
+  for (i = 0; i < clientThreads; i++) {
+    printf("Client %d/%d Stats:\n", clientIndex * clientThreads + i + 1, 
+        numClients * clientThreads);
     printf("\tp50 Latency: %" PRId64 "us\n", 
         wStats[i]->latencies[requests/2]);
     printf("\tp90 Latency: %" PRId64 "us\n", 
@@ -469,6 +474,8 @@ void* lrangeWorkerThread(void* args) {
 
 int main(int argc, char* argv[]) {
   char* coordinatorLocator;
+  uint64_t clientIndex = 0;
+  uint64_t numClients = 1;
   uint64_t clientThreads = 1;
   uint64_t requests = 100000;
   uint64_t valueSize = 3;
@@ -481,6 +488,12 @@ int main(int argc, char* argv[]) {
   for (i = 1; i < argc;) {
     if (strcmp(argv[i], "-C") == 0) {
       coordinatorLocator = argv[i+1];
+      i+=2;
+    } else if (strcmp(argv[i], "--clientIndex") == 0) {
+      clientIndex = strtoul(argv[i+1], NULL, 10);
+      i+=2;
+    } else if (strcmp(argv[i], "--numClients") == 0) {
+      numClients = strtoul(argv[i+1], NULL, 10);
       i+=2;
     } else if (strcmp(argv[i], "-c") == 0) {
       clientThreads = strtoul(argv[i+1], NULL, 10);
@@ -689,7 +702,8 @@ int main(int argc, char* argv[]) {
     }
     uint64_t end = ustime();
 
-    reportStats(end - start, wStats, clientThreads, requests);
+    reportStats(end - start, wStats, clientIndex, numClients, clientThreads, 
+        requests);
 
     for (i = 0; i < clientThreads; i++) {
       freeWorkerStats(wStats[i]);
