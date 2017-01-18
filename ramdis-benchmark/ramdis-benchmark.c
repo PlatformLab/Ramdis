@@ -24,15 +24,15 @@ const char USAGE[] =
 "  --numClients <n>    Total number of clients running [default: 1].\n"
 "  --threads <n>       Number of benchmark client threads to run in parallel\n"
 "                      [default: 1]\n"
-"  -n <requests>       Number of requests each client should execute \n"
+"  --requests <n>      Number of requests each client should execute \n"
 "                      [default: 100000]\n"
-"  -d <size>           Size in bytes of value to read/write in \n"
+"  --valueSize <n>    Size in bytes of value to read/write in \n"
 "                      GET/SET/PUSH/POP/SADD/SPOP, etc. [default: 3]\n"
-"  -l <lrange>         Get elements [0,lrange] for LRANGE command. Maximum \n"
+"  --lrange <n>        Get elements [0,lrange] for LRANGE command. Maximum \n"
 "                      value is 100000 [default: 100]\n"
-"  -r <keyspacelen>    Execute operations on a random set of keys in the\n"
+"  --keyspacelen <n>   Execute operations on a random set of keys in the\n"
 "                      space from [0,keyspacelen) [default: 1]\n"
-"  -t <tests>          Comma separated list of tests to run. Available \n"
+"  --tests <tests>     Comma separated list of tests to run. Available \n"
 "                      tests: all, get, set, incr, lpush, rpush, lpop, \n"
 "                      rpop, sadd, spop, lrange, mset. [default: all]\n"
 "  --outputDir <dir>   Directory to write performance data. If not \n"
@@ -578,19 +578,19 @@ int main(int argc, char* argv[]) {
     } else if (strcmp(argv[i], "--threads") == 0) {
       clientThreads = strtoul(argv[i+1], NULL, 10);
       i+=2;
-    } else if (strcmp(argv[i], "-n") == 0) {
+    } else if (strcmp(argv[i], "--requests") == 0) {
       requests = strtoul(argv[i+1], NULL, 10);
       i+=2;
-    } else if (strcmp(argv[i], "-d") == 0) {
+    } else if (strcmp(argv[i], "--valueSize") == 0) {
       valueSize = strtoul(argv[i+1], NULL, 10);
       i+=2;
-    } else if (strcmp(argv[i], "-l") == 0) {
+    } else if (strcmp(argv[i], "--lrange") == 0) {
       lrangeSize = strtoul(argv[i+1], NULL, 10);
       i+=2;
-    } else if (strcmp(argv[i], "-r") == 0) {
+    } else if (strcmp(argv[i], "--keyspacelen") == 0) {
       keySpaceLength = strtoul(argv[i+1], NULL, 10);
       i+=2;
-    } else if (strcmp(argv[i], "-t") == 0) {
+    } else if (strcmp(argv[i], "--tests") == 0) {
       tests = argv[i+1];
       i+=2;
     } else if (strcmp(argv[i], "--outputDir") == 0) {
