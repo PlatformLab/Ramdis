@@ -26,7 +26,7 @@ const char USAGE[] =
 "                      [default: 1]\n"
 "  --requests <n>      Number of requests each client should execute \n"
 "                      [default: 100000]\n"
-"  --valueSize <n>    Size in bytes of value to read/write in \n"
+"  --valueSize <n>     Size in bytes of value to read/write in \n"
 "                      GET/SET/PUSH/POP/SADD/SPOP, etc. [default: 3]\n"
 "  --lrange <n>        Get elements [0,lrange] for LRANGE command. Maximum \n"
 "                      value is 100000 [default: 100]\n"
