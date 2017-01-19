@@ -3,6 +3,7 @@
 from __future__ import division
 import sys
 sys.path.append('../RAMCloud/scripts')
+import os
 import cluster
 from optparse import OptionParser
 import re
@@ -117,10 +118,14 @@ if __name__ == '__main__':
     parser.add_option('--clients', metavar='N', dest='clients',
             help='Comma seperated list of number of clients to benchmark '
             'each operation with.')
-    parser.add_option('--totalOps', type=int, default=100000,
+    parser.add_option('--totalOps', type=int,
             metavar='nOPS', dest='total_ops',
             help='Total number of operations to execute for each test by '
             'all clients.')
+    parser.add_option('--perClientOps', type=int,
+            metavar='cOPS', dest='per_client_ops',
+            help='Total number of operations to execute for each test by '
+            'each clients.')
     parser.add_option('--outputDir', metavar='DIR', dest='output_dir',
             help='Directory for benchmark output files.')
 
@@ -132,6 +137,10 @@ if __name__ == '__main__':
 
     if not options.clients:
         print "ERROR: Must specify number of clients to run with --clients"
+        sys.exit()
+
+    if not options.total_ops and not options.per_client_ops:
+        print "ERROR: Must specify either --totalOps or --perClientOps"
         sys.exit()
 
     cluster_args = {
@@ -158,31 +167,46 @@ if __name__ == '__main__':
         '--outputDir':      options.output_dir
     }
 
+    # Create output directory if it doesn't exist
+    if not os.path.exists(options.output_dir):
+        os.makedirs(options.output_dir)
+
     # Run tests
     for test in options.tests.split(','):
         client_args['--tests'] = test
 
         for c in options.clients.split(','):
             if int(c) % 4 == 0:
-                cluster_args['num_clients'] = (int(c) / 4)
+                cluster_args['num_clients'] = int(int(c) / 4)
                 client_args['--threads'] = 4
             elif int(c) % 3 == 0:
-                cluster_args['num_clients'] = (int(c) / 3)
+                cluster_args['num_clients'] = int(int(c) / 3)
                 client_args['--threads'] = 3
             elif int(c) % 2 == 0:
-                cluster_args['num_clients'] = (int(c) / 2)
+                cluster_args['num_clients'] = int(int(c) / 2)
                 client_args['--threads'] = 2
             else:
                 cluster_args['num_clients'] = int(c)
                 client_args['--threads'] = 1
+           
+            if not options.per_client_ops:
+                client_args['--requests'] = options.total_ops / int(c)
+            else:
+                client_args['--requests'] = options.per_client_ops
 
-            client_args['--requests'] = options.total_ops / int(c)
+            totalOps = 0
+            if not options.per_client_ops:
+                totalOps = options.total_ops
+            else:
+                totalOps = options.per_client_ops * int(c)
 
-            print "===== TEST: %s CLIENTS: %d (%dx%d) =====" % (test, int(c), 
+            print "===== TEST: %s CLIENTS: %d (%dx%d) OPS: %s =====" % (test, 
+                    int(c), 
                     int(cluster_args['num_clients']), 
-                    int(client_args['--threads']))
+                    int(client_args['--threads']),
+                    totalOps)
 
-#            cluster.run(client="../ramdis-benchmark/ramdis-benchmark %s" % (flatten_args(client_args)), **cluster_args)
+            cluster.run(client="../ramdis-benchmark/ramdis-benchmark %s" % (flatten_args(client_args)), **cluster_args)
 
             print ""
 
