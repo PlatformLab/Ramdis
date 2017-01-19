@@ -149,7 +149,7 @@ if __name__ == '__main__':
                 client_args['--threads'] = 1
            
             if not options.per_client_ops:
-                client_args['--requests'] = options.total_ops / int(c)
+                client_args['--requests'] = int(options.total_ops / int(c))
             else:
                 client_args['--requests'] = options.per_client_ops
 
