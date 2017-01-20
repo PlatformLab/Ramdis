@@ -758,121 +758,120 @@ Object* lpop(Context* c, Object* key) {
      * from a segment, the following segments are empty. In this case we take the
      * time to do some clean-up and remove those segments from the index. */
 
-    for (int i = 0; i < index.len; i++) {
-      if (index.entries[i].elemCount == 0) {
-        // Skip over the leading segments that are empty.
-        continue;
+    int i;
+    for (i = 0; i < index.len; i++) {
+      if (index.entries[i].elemCount != 0) {
+        break;
+      }
+    }
+
+    RAMCloud::Buffer segKey;
+
+    segKey.append(&rootKey);
+    appendKeyComponent(&segKey, (char*)&index.entries[i].segId, 
+        sizeof(int16_t));
+
+    RAMCloud::Buffer segValue;
+    try {
+      tx.read(c->tableId,
+          segKey.getRange(0, segKey.size()), 
+          segKey.size(), 
+          &segValue);
+    } catch (RAMCloud::ObjectDoesntExistException& e) {
+      if (tx.commit()) {
+        c->err = -1;
+        snprintf(c->errmsg, sizeof(c->errmsg), 
+            "List is corrupted.");
+        return 0;
       } else {
-        // First segment that has 1 or more elements.
-        RAMCloud::Buffer segKey;
+        continue;
+      }
+    }
+    
+    // Extract value from segment.
+    uint16_t len = *static_cast<uint16_t*>(segValue.getRange(
+          0, sizeof(uint16_t)));
+    Object* obj = (Object*)malloc(sizeof(Object));
+    obj->data = (void*)malloc(len);
+    obj->len = len;
+    segValue.copy(index.entries[i].elemCount * sizeof(uint16_t), len, 
+        obj->data);
 
-        segKey.append(&rootKey);
-        appendKeyComponent(&segKey, (char*)&index.entries[i].segId, 
-            sizeof(int16_t));
+    if (index.entries[i].elemCount == 1) {
+      /* This is the last element in the segment. In this case, remove the
+       * segment from the list, as well as any following segments that are
+       * empty. */
+      if (totalElements == 1) {
+        /* This segment contained the very last element in this list. The
+         * list is now completely empty. In this case, reset the list to a
+         * default state. We currently do this by resetting the index and
+         * don't actually remove the segments that have a single object in
+         * them from RAMCloud. They will eventually be overwriten if the list
+         * is sufficiently filled again. */
+        ListIndexEntry entry;
+        entry.segId = 0;
+        entry.elemCount = 0;
+        entry.segSizeKb = 0;
 
-        RAMCloud::Buffer segValue;
-        try {
-          tx.read(c->tableId,
-              segKey.getRange(0, segKey.size()), 
-              segKey.size(), 
-              &segValue);
-        } catch (RAMCloud::ObjectDoesntExistException& e) {
-          if (tx.commit()) {
-            c->err = -1;
-            snprintf(c->errmsg, sizeof(c->errmsg), 
-                "List is corrupted.");
-            return 0;
-          } else {
-            continue;
-          }
-        }
-        
-        // Extract value from segment.
-        uint16_t len = *static_cast<uint16_t*>(segValue.getRange(
-              0, sizeof(uint16_t)));
-        Object* obj = (Object*)malloc(sizeof(Object));
-        obj->data = (void*)malloc(len);
-        obj->len = len;
-        segValue.copy(index.entries[i].elemCount * sizeof(uint16_t), len, 
-            obj->data);
+        newRootValue.append((void*)&entry, sizeof(ListIndexEntry));
 
-        if (index.entries[i].elemCount == 1) {
-          /* This is the last element in the segment. In this case, remove the
-           * segment from the list, as well as any following segments that are
-           * empty. */
-          if (totalElements == 1) {
-            /* This segment contained the very last element in this list. The
-             * list is now completely empty. In this case, reset the list to a
-             * default state. We currently do this by resetting the index and
-             * don't actually remove the segments that have a single object in
-             * them from RAMCloud. They will eventually be overwriten if the list
-             * is sufficiently filled again. */
-            ListIndexEntry entry;
-            entry.segId = 0;
-            entry.elemCount = 0;
-            entry.segSizeKb = 0;
+        tx.write(c->tableId, 
+            rootKey.getRange(0, rootKey.size()),
+            rootKey.size(),
+            newRootValue.getRange(0, newRootValue.size()),
+            newRootValue.size());
+      } else {
+        /* There are more elements in segments down the line. Find the next
+         * non-empty segment to be the head segment. */
+        for (int j = i + 1; j < index.len; j++) {
+          if (index.entries[j].elemCount > 0) {
+            newRootValue.append(&index.entries[j], 
+                (index.len - j) * sizeof(ListIndexEntry));
 
-            newRootValue.append((void*)&entry, sizeof(ListIndexEntry));
-
-            tx.write(c->tableId, 
+            tx.write(c->tableId,
                 rootKey.getRange(0, rootKey.size()),
                 rootKey.size(),
                 newRootValue.getRange(0, newRootValue.size()),
                 newRootValue.size());
-          } else {
-            /* There are more elements in segments down the line. Find the next
-             * non-empty segment to be the head segment. */
-            for (int j = i + 1; j < index.len; j++) {
-              if (index.entries[j].elemCount > 0) {
-                newRootValue.append(&index.entries[j], 
-                    (index.len - j) * sizeof(ListIndexEntry));
 
-                tx.write(c->tableId,
-                    rootKey.getRange(0, rootKey.size()),
-                    rootKey.size(),
-                    newRootValue.getRange(0, newRootValue.size()),
-                    newRootValue.size());
-
-                break;
-              }
-            }
+            break;
           }
-        } else {
-          /* The element that we just popped was not the last element in the
-           * segment. In this case write the new segment value back and update
-           * the index. */
-          RAMCloud::Buffer newSegValue;
-          newSegValue.append(&segValue, sizeof(uint16_t), 
-              (index.entries[i].elemCount - 1) * sizeof(uint16_t));
-          newSegValue.append(&segValue, 
-              (index.entries[i].elemCount * sizeof(uint16_t)) + len);
-
-          tx.write(c->tableId,
-              segKey.getRange(0, segKey.size()),
-              segKey.size(),
-              newSegValue.getRange(0, newSegValue.size()),
-              newSegValue.size());
-
-          index.entries[i].elemCount--;
-          index.entries[i].segSizeKb = (uint8_t)(newSegValue.size() >> 10);
-
-          newRootValue.append(&index.entries[i], 
-              (index.len - i)*sizeof(ListIndexEntry));
-
-          tx.write(c->tableId,
-              rootKey.getRange(0, rootKey.size()),
-              rootKey.size(),
-              newRootValue.getRange(0, newRootValue.size()),
-              newRootValue.size());
-        }
-        
-        if (tx.commit()) {
-          return obj;
-        } else {
-          freeObject(obj);
-          continue;
         }
       }
+    } else {
+      /* The element that we just popped was not the last element in the
+       * segment. In this case write the new segment value back and update
+       * the index. */
+      RAMCloud::Buffer newSegValue;
+      newSegValue.append(&segValue, sizeof(uint16_t), 
+          (index.entries[i].elemCount - 1) * sizeof(uint16_t));
+      newSegValue.append(&segValue, 
+          (index.entries[i].elemCount * sizeof(uint16_t)) + len);
+
+      tx.write(c->tableId,
+          segKey.getRange(0, segKey.size()),
+          segKey.size(),
+          newSegValue.getRange(0, newSegValue.size()),
+          newSegValue.size());
+
+      index.entries[i].elemCount--;
+      index.entries[i].segSizeKb = (uint8_t)(newSegValue.size() >> 10);
+
+      newRootValue.append(&index.entries[i], 
+          (index.len - i)*sizeof(ListIndexEntry));
+
+      tx.write(c->tableId,
+          rootKey.getRange(0, rootKey.size()),
+          rootKey.size(),
+          newRootValue.getRange(0, newRootValue.size()),
+          newRootValue.size());
+    }
+    
+    if (tx.commit()) {
+      return obj;
+    } else {
+      freeObject(obj);
+      continue;
     }
   }
 }
@@ -1000,123 +999,122 @@ Object* rpop(Context* c, Object* key) {
      * from a segment, the following segments are empty. In this case we take the
      * time to do some clean-up and remove those segments from the index. */
 
-    for (int i = index.len - 1; i >= 0; i--) {
-      if (index.entries[i].elemCount == 0) {
-        // Skip over the leading segments that are empty.
-        continue;
+    int i;
+    for (i = index.len - 1; i >= 0; i--) {
+      if (index.entries[i].elemCount != 0) {
+        break;
+      }
+    }
+
+    RAMCloud::Buffer segKey;
+
+    segKey.append(&rootKey);
+    appendKeyComponent(&segKey, (char*)&index.entries[i].segId, 
+        sizeof(int16_t));
+
+    RAMCloud::Buffer segValue;
+    try {
+      tx.read(c->tableId,
+          segKey.getRange(0, segKey.size()), 
+          segKey.size(), 
+          &segValue);
+    } catch (RAMCloud::ObjectDoesntExistException& e) {
+      if (tx.commit()) {
+        c->err = -1;
+        snprintf(c->errmsg, sizeof(c->errmsg), 
+            "List is corrupted.");
+        return 0;
       } else {
-        // First segment that has 1 or more elements.
-        RAMCloud::Buffer segKey;
+        continue;
+      }
+    }
 
-        segKey.append(&rootKey);
-        appendKeyComponent(&segKey, (char*)&index.entries[i].segId, 
-            sizeof(int16_t));
+    // Extract value from segment.
+    uint16_t len = *static_cast<uint16_t*>(segValue.getRange(
+          (index.entries[i].elemCount - 1) * sizeof(uint16_t), 
+          sizeof(uint16_t)));
+    Object* obj = (Object*)malloc(sizeof(Object));
+    obj->data = (void*)malloc(len);
+    obj->len = len;
+    segValue.copy(segValue.size() - len, len, obj->data);
 
-        RAMCloud::Buffer segValue;
-        try {
-          tx.read(c->tableId,
-              segKey.getRange(0, segKey.size()), 
-              segKey.size(), 
-              &segValue);
-        } catch (RAMCloud::ObjectDoesntExistException& e) {
-          if (tx.commit()) {
-            c->err = -1;
-            snprintf(c->errmsg, sizeof(c->errmsg), 
-                "List is corrupted.");
-            return 0;
-          } else {
-            continue;
-          }
-        }
+    if (index.entries[i].elemCount == 1) {
+      /* This is the last element in the segment. In this case, remove the
+       * segment from the list, as well as any following segments that are
+       * empty. */
+      if (totalElements == 1) {
+        /* This segment contained the very last element in this list. The
+         * list is now completely empty. In this case, reset the list to a
+         * default state. We currently do this by resetting the index and
+         * don't actually remove the segments that have a single object in
+         * them from RAMCloud. They will eventually be overwriten if the list
+         * is sufficiently filled again. */
+        ListIndexEntry entry;
+        entry.segId = 0;
+        entry.elemCount = 0;
+        entry.segSizeKb = 0;
 
-        // Extract value from segment.
-        uint16_t len = *static_cast<uint16_t*>(segValue.getRange(
-              (index.entries[i].elemCount - 1) * sizeof(uint16_t), 
-              sizeof(uint16_t)));
-        Object* obj = (Object*)malloc(sizeof(Object));
-        obj->data = (void*)malloc(len);
-        obj->len = len;
-        segValue.copy(segValue.size() - len, len, obj->data);
+        newRootValue.append((void*)&entry, sizeof(ListIndexEntry));
 
-        if (index.entries[i].elemCount == 1) {
-          /* This is the last element in the segment. In this case, remove the
-           * segment from the list, as well as any following segments that are
-           * empty. */
-          if (totalElements == 1) {
-            /* This segment contained the very last element in this list. The
-             * list is now completely empty. In this case, reset the list to a
-             * default state. We currently do this by resetting the index and
-             * don't actually remove the segments that have a single object in
-             * them from RAMCloud. They will eventually be overwriten if the list
-             * is sufficiently filled again. */
-            ListIndexEntry entry;
-            entry.segId = 0;
-            entry.elemCount = 0;
-            entry.segSizeKb = 0;
+        tx.write(c->tableId, 
+            rootKey.getRange(0, rootKey.size()),
+            rootKey.size(),
+            newRootValue.getRange(0, newRootValue.size()),
+            newRootValue.size());
+      } else {
+        /* There are more elements in segments up the line. Find the next
+         * non-empty segment to be the tail segment. */
+        for (int j = i - 1; j >= 0; j--) {
+          if (index.entries[j].elemCount > 0) {
+            newRootValue.append(&index.entries[0], 
+                (j + 1) * sizeof(ListIndexEntry));
 
-            newRootValue.append((void*)&entry, sizeof(ListIndexEntry));
-
-            tx.write(c->tableId, 
+            tx.write(c->tableId,
                 rootKey.getRange(0, rootKey.size()),
                 rootKey.size(),
                 newRootValue.getRange(0, newRootValue.size()),
                 newRootValue.size());
-          } else {
-            /* There are more elements in segments up the line. Find the next
-             * non-empty segment to be the tail segment. */
-            for (int j = i - 1; j >= 0; j--) {
-              if (index.entries[j].elemCount > 0) {
-                newRootValue.append(&index.entries[0], 
-                    (j + 1) * sizeof(ListIndexEntry));
 
-                tx.write(c->tableId,
-                    rootKey.getRange(0, rootKey.size()),
-                    rootKey.size(),
-                    newRootValue.getRange(0, newRootValue.size()),
-                    newRootValue.size());
-
-                break;
-              }
-            }
+            break;
           }
-        } else {
-          /* The element that we just popped was not the last element in the
-           * list. In this case write the new segment value back and update the
-           * index. */
-          RAMCloud::Buffer newSegValue;
-          newSegValue.append(&segValue, 0, 
-              (index.entries[i].elemCount - 1) * sizeof(uint16_t));
-          newSegValue.append(&segValue, 
-              (index.entries[i].elemCount * sizeof(uint16_t)),
-              segValue.size() - (index.entries[i].elemCount * sizeof(uint16_t))
-              - len);
-
-          tx.write(c->tableId,
-              segKey.getRange(0, segKey.size()),
-              segKey.size(),
-              newSegValue.getRange(0, newSegValue.size()),
-              newSegValue.size());
-
-          index.entries[i].elemCount--;
-          index.entries[i].segSizeKb = (uint8_t)(newSegValue.size() >> 10);
-
-          newRootValue.append(&index.entries[0], 
-              (i + 1)*sizeof(ListIndexEntry));
-
-          tx.write(c->tableId,
-              rootKey.getRange(0, rootKey.size()),
-              rootKey.size(),
-              newRootValue.getRange(0, newRootValue.size()),
-              newRootValue.size());
-        }
-        
-        if (tx.commit()) {
-          return obj;
-        } else {
-          freeObject(obj);
-          continue;
         }
       }
+    } else {
+      /* The element that we just popped was not the last element in the
+       * list. In this case write the new segment value back and update the
+       * index. */
+      RAMCloud::Buffer newSegValue;
+      newSegValue.append(&segValue, 0, 
+          (index.entries[i].elemCount - 1) * sizeof(uint16_t));
+      newSegValue.append(&segValue, 
+          (index.entries[i].elemCount * sizeof(uint16_t)),
+          segValue.size() - (index.entries[i].elemCount * sizeof(uint16_t))
+          - len);
+
+      tx.write(c->tableId,
+          segKey.getRange(0, segKey.size()),
+          segKey.size(),
+          newSegValue.getRange(0, newSegValue.size()),
+          newSegValue.size());
+
+      index.entries[i].elemCount--;
+      index.entries[i].segSizeKb = (uint8_t)(newSegValue.size() >> 10);
+
+      newRootValue.append(&index.entries[0], 
+          (i + 1)*sizeof(ListIndexEntry));
+
+      tx.write(c->tableId,
+          rootKey.getRange(0, rootKey.size()),
+          rootKey.size(),
+          newRootValue.getRange(0, newRootValue.size()),
+          newRootValue.size());
+    }
+    
+    if (tx.commit()) {
+      return obj;
+    } else {
+      freeObject(obj);
+      continue;
     }
   }
 }
@@ -1212,76 +1210,74 @@ ObjectArray* lrange(Context* c, Object* key, long start, long end) {
       } else {
         continue;
       }
+    } 
+
+    uint64_t rangeStart, rangeEnd;
+    if (start < 0) {
+      if (totalElements + start < 0) {
+        rangeStart = 0;
+      } else {
+        rangeStart = (uint64_t)(totalElements + start);
+      }
     } else {
-      uint64_t rangeStart, rangeEnd;
-      if (start < 0) {
-        if (totalElements + start < 0) {
-          rangeStart = 0;
-        } else {
-          rangeStart = (uint64_t)(totalElements + start);
-        }
+      rangeStart = (uint64_t)start;
+    }
+
+    if (end < 0) {
+      if (totalElements + end < 0) {
+        rangeEnd = 0;
       } else {
-        rangeStart = (uint64_t)start;
+        rangeEnd = (uint64_t)(totalElements + end);
+      }
+    } else {
+      rangeEnd = (uint64_t)end;
+    }
+
+    if (rangeEnd < rangeStart) {
+      rangeEnd = rangeStart;
+    }
+
+    /* Count the number of list segments that are straddled by this range. */
+    uint64_t elementStartIndex = 0;
+    uint64_t elementsPriorToSegRange = 0;
+    uint32_t segmentsInRange = 0;
+    uint32_t firstSegInRange = 0;
+    for (int i = 0; i < index.len; i++) {
+      /* Current segment contains elements in the range:
+       * [elementIndex, elementIndex + index.entries[i].elemCount - 1]
+       * inclusive. */
+      uint64_t elementEndIndex = 
+          elementStartIndex + index.entries[i].elemCount - 1;
+      if (elementEndIndex < rangeStart) {
+        firstSegInRange++;
+        elementsPriorToSegRange += index.entries[i].elemCount;
+      } else if (rangeStart <= elementEndIndex && 
+          elementStartIndex <= rangeEnd) {
+        segmentsInRange++;
       }
 
-      if (end < 0) {
-        if (totalElements + end < 0) {
-          rangeEnd = 0;
-        } else {
-          rangeEnd = (uint64_t)(totalElements + end);
-        }
-      } else {
-        rangeEnd = (uint64_t)end;
-      }
+      elementStartIndex += index.entries[i].elemCount;
+    }
 
-      if (rangeEnd < rangeStart) {
-        rangeEnd = rangeStart;
-      }
+    RAMCloud::Tub<RAMCloud::Transaction::ReadOp> readOps[segmentsInRange];
+    RAMCloud::Buffer segValues[segmentsInRange];
 
-      /* Count the number of list segments that are straddled by this range. */
-      uint64_t elementStartIndex = 0;
-      uint64_t elementsPriorToSegRange = 0;
-      uint32_t segmentsInRange = 0;
-      uint32_t firstSegInRange = 0;
-      for (int i = 0; i < index.len; i++) {
-        /* Current segment contains elements in the range:
-         * [elementIndex, elementIndex + index.entries[i].elemCount - 1]
-         * inclusive. */
-        uint64_t elementEndIndex = 
-            elementStartIndex + index.entries[i].elemCount - 1;
-        if (elementEndIndex < rangeStart) {
-          firstSegInRange++;
-          elementsPriorToSegRange += index.entries[i].elemCount;
-        } else if (rangeStart <= elementEndIndex && 
-            elementStartIndex <= rangeEnd) {
-          segmentsInRange++;
-        }
+    /* Read segments asynchronously. */
+    for (int i = 0; i < segmentsInRange; i++) {
+      uint32_t segIndex = firstSegInRange + i;
+      RAMCloud::Buffer segKey;
+      segKey.append(&rootKey);
+      appendKeyComponent(&segKey, (char*)&index.entries[segIndex].segId, 
+          sizeof(int16_t));
+      readOps[i].construct(&tx, c->tableId, segKey.getRange(0,
+            segKey.size()), segKey.size(), &segValues[i], true);
+    }
 
-        elementStartIndex += index.entries[i].elemCount;
-      }
+    for (int i = 0; i < segmentsInRange; i++) {
+      readOps[i].get()->wait();
+    }
 
-      RAMCloud::Tub<RAMCloud::Transaction::ReadOp> readOps[segmentsInRange];
-      RAMCloud::Buffer segValues[segmentsInRange];
-
-      /* Read segments asynchronously. */
-      for (int i = 0; i < segmentsInRange; i++) {
-        uint32_t segIndex = firstSegInRange + i;
-        RAMCloud::Buffer segKey;
-        segKey.append(&rootKey);
-        appendKeyComponent(&segKey, (char*)&index.entries[segIndex].segId, 
-            sizeof(int16_t));
-        readOps[i].construct(&tx, c->tableId, segKey.getRange(0,
-              segKey.size()), segKey.size(), &segValues[i], true);
-      }
-
-      for (int i = 0; i < segmentsInRange; i++) {
-        readOps[i].get()->wait();
-      }
-
-      if (!tx.commit()) {
-        continue;
-      }
-
+    if (tx.commit()) {
       ObjectArray* objArray = (ObjectArray*)malloc(sizeof(ObjectArray));
       objArray->len = (rangeEnd - rangeStart + 1);
       objArray->array = (Object*)malloc(
@@ -1337,6 +1333,8 @@ ObjectArray* lrange(Context* c, Object* key, long start, long end) {
       }
 
       return objArray;
+    } else {
+      continue;
     }
   }
 }
