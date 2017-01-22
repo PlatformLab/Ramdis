@@ -109,6 +109,7 @@ if __name__ == '__main__':
             if latCDFFilename not in allfiles or srcFileMTime > getmtime(
                     join(dataDir, latCDFFilename)):
                 print "Generating %s... " % latCDFFilename,
+                sys.stdout.flush()
 
                 reqLatFilenameList = []
                 for i in range(1, clients + 1):
@@ -124,6 +125,7 @@ if __name__ == '__main__':
             if tputFilename not in allfiles or srcFileMTime > getmtime(
                     join(dataDir, tputFilename)):
                 print "Generating %s... " % tputFilename,
+                sys.stdout.flush()
 
                 execSumFilenameList = []
                 for i in range(1, clients + 1):
@@ -163,6 +165,7 @@ if __name__ == '__main__':
 
         if genTputVClients == True:
             print "Generating %s... " % tputVClientsFilename,
+            sys.stdout.flush()
 
             tvcfile = open(join(dataDir, tputVClientsFilename), 'w')
             for clients in experiments[op]:
