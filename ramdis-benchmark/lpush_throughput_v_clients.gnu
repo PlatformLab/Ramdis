@@ -3,7 +3,7 @@
 ###
 
 set terminal svg size 800, 600 fname 'Verdana' fsize 12
-set output "lpush_throughput_v_clients.svg"
+set output outputFile
 
 set title "LPUSH Throughput"
 
@@ -25,8 +25,8 @@ set xlabel "Clients"
 #set xrange [128:4096]
 
 set ylabel "Operations per second"
-set yrange [0:20000]
+set yrange [0:40000]
 #set ytics 1
 #set logscale y
 
-plot "lpush_throughput_v_clients.dat" using 1:2 with linespoints ls 5 title "Throughput"
+plot inputFile using 1:2 with linespoints ls 5 title "Throughput"

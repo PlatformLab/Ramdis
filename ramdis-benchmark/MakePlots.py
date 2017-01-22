@@ -1,8 +1,13 @@
 #!/usr/bin/env python
 
 """
-Analyzes files in data directory to determine which, if any, gnuplot formatted
-data files need to be generated (or re-generated) and generates them. 
+Makes gnuplot graphs from files in a data directory. MakePlot.py figures out
+based on the files in the directory which experiments have been run, generates
+intermediate gnuplot formatted data files for those experiments, and then runs
+gnuplot to generate graphs. When subsets of experiments are re-run, or more
+experiments are run and data files are added to the directory, MakePlots.py is
+smart enough to detect that and build only those graphs that don't yet exist or
+are outdated.
 
 Input Files:
    op_clientN-x_reqLatencies.dat
@@ -12,11 +17,13 @@ Output Files:
    op_clientN-all_reqLatencies.cdf
    op_clientN-all_throughput.dat
    op_throughput_v_clients.dat
+   op_throughput_v_clients.svg
 """
 
 import sys
-from os import listdir
-from os.path import isfile, join, getmtime
+from os import listdir, makedirs
+from os.path import isfile, join, getmtime, exists
+from subprocess import call
 from optparse import OptionParser
 import re
 
@@ -77,7 +84,12 @@ if __name__ == '__main__':
         sys.exit()
 
     dataDir = options.data_dir
+    graphDir = join(options.data_dir, 'graphs')
 
+    # Create graph directory if it doesn't exist
+    if not exists(graphDir):
+        makedirs(graphDir)
+    
     # First analyze directory to see which (op, clients) experiments are
     # present.
     experiments = {}
@@ -94,7 +106,8 @@ if __name__ == '__main__':
     for op in experiments.keys():
         experiments[op].sort()
         print "OP: %s, CLIENTS: %s" % (op, experiments[op])
-   
+
+    # Check to see what GNU plot files need to be generated or updated
     for op in experiments.keys():
         tputFilenameList = []
         for clients in experiments[op]:
@@ -190,5 +203,24 @@ if __name__ == '__main__':
 
             print "Done."
 
+    # Check to see what graphs need to be generated or updated
+    graphfiles = [f for f in listdir(graphDir) if isfile(join(graphDir, f))]
+    for op in experiments.keys():
+        dependencyFilename = "%s_throughput_v_clients.dat" % (op)
+        targetFilename = "%s_throughput_v_clients.svg" % (op)
 
+        if targetFilename not in graphfiles or getmtime(join(dataDir,
+            dependencyFilename)) > getmtime(join(graphDir, targetFilename)):
+            if targetFilename not in graphfiles:
+                print "Generating %s..." % targetFilename,
+            else:
+                print "Updating %s..." % targetFilename,
+            sys.stdout.flush()
 
+            gnuplotFilename = "%s_throughput_v_clients.gnu" % op
+            call(["gnuplot", "-e", "inputFile='%s'; outputFile='%s'" %
+                (join(dataDir, dependencyFilename), join(graphDir,
+                    targetFilename)), gnuplotFilename])
+
+            print "Done."
+        

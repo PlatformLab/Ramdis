@@ -3,7 +3,7 @@
 ###
 
 set terminal svg size 800, 600 fname 'Verdana' fsize 12
-set output "rpush_throughput_v_clients.svg"
+set output outputFile
 
 set title "RPUSH Throughput"
 
@@ -29,4 +29,4 @@ set yrange [0:20000]
 #set ytics 1
 #set logscale y
 
-plot "rpush_throughput_v_clients.dat" using 1:2 with linespoints ls 5 title "Throughput"
+plot inputFile using 1:2 with linespoints ls 5 title "Throughput"
