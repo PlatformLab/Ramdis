@@ -4,6 +4,8 @@ from __future__ import division
 import sys
 sys.path.append('../RAMCloud/scripts')
 import os
+from os import makedirs
+from os.path import join, exists
 import cluster
 from optparse import OptionParser
 import re
@@ -65,31 +67,35 @@ if __name__ == '__main__':
     parser.add_option('--tests', metavar='OPS', dest='tests',
             help='Comma seperated list of operations to benchmark.')
     parser.add_option('--serverSpan', metavar='N', dest='server_span',
-            default=1,
+            type=int, default=1,
             help='Number of RAMCloud servers to use for the workload.')
-    parser.add_option('--valueSize', metavar='N', dest='value_size', default=3,
+    parser.add_option('--valueSize', metavar='N', dest='value_size', 
+            type=int, default=3,
             help='Size in bytes of value to read/write in '
             'GET/SET/PUSH/POP/SADD/SPOP, etc.')
-    parser.add_option('--lrangelen', metavar='N', dest='lrange_len', default=100,
+    parser.add_option('--lrangelen', metavar='N', dest='lrange_len', 
+            type=int, default=100,
             help='Get elements [0,lrangelen] for LRANGE command. Maximum value '
             'is 100000.')
     parser.add_option('--keyspacelen', metavar='N', dest='key_space_len', 
-            default=1,
+            type=int, default=1,
             help='Execute operations on a random set of keys in the space '
             'from [0,keyspacelen).')
     parser.add_option('--clients', metavar='N', dest='clients',
             help='Comma seperated list of number of clients to benchmark '
             'each operation with.')
-    parser.add_option('--totalOps', type=int,
-            metavar='nOPS', dest='total_ops',
+    parser.add_option('--totalOps', metavar='nOPS', dest='total_ops',
+            type=int,
             help='Total number of operations to execute for each test by '
             'all clients.')
-    parser.add_option('--perClientOps', type=int,
-            metavar='cOPS', dest='per_client_ops',
+    parser.add_option('--perClientOps', metavar='cOPS', dest='per_client_ops', 
+            type=int,
             help='Total number of operations to execute for each test by '
             'each clients.')
     parser.add_option('--outputDir', metavar='DIR', dest='output_dir',
-            help='Directory for benchmark output files.')
+            help='Directory for benchmark output. Benchmark will create a '
+            'subdirectory named according to the experiment parameters where '
+            'data files will be stored.')
 
     (options, args) = parser.parse_args()
 
@@ -122,18 +128,28 @@ if __name__ == '__main__':
     if options.master_args != None:
         cluster_args['master_args'] = options.master_args
 
-#    theoutputdir = "s%dr%d_ss%svs%dlrl%dksl%d" % ()
+    # Formulate a directory name based on the experiment parameters
+    dataDir = "s%dr%d_ss%dvs%dlrl%dksl%d" % (
+            options.num_servers,
+            options.replicas,
+            options.server_span,
+            options.value_size,
+            options.lrange_len,
+            options.key_space_len)
 
     client_args = {
         '--valueSize':      options.value_size,
         '--lrangelen':      options.lrange_len,
         '--keyspacelen':    options.key_space_len,
-        '--outputDir':      options.output_dir
+        '--outputDir':      join(options.output_dir, dataDir)
     }
 
     # Create output directory if it doesn't exist
-    if not os.path.exists(options.output_dir):
-        os.makedirs(options.output_dir)
+    if not exists(options.output_dir):
+        makedirs(options.output_dir)
+
+    if not exists(join(options.output_dir, dataDir)):
+        makedirs(join(options.output_dir, dataDir))
 
     # Run tests
     for test in options.tests.split(','):
