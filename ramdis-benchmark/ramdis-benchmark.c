@@ -28,8 +28,8 @@ const char USAGE[] =
 "                      [default: 100000]\n"
 "  --valueSize <n>     Size in bytes of value to read/write in \n"
 "                      GET/SET/PUSH/POP/SADD/SPOP, etc. [default: 3]\n"
-"  --lrange <n>        Get elements [0,lrange] for LRANGE command. Maximum \n"
-"                      value is 100000 [default: 100]\n"
+"  --lrangelen <n>     Get elements [0,lrangelen] for LRANGE command. \n"
+"                      Maximum value is 100000 [default: 100]\n"
 "  --keyspacelen <n>   Execute operations on a random set of keys in the\n"
 "                      space from [0,keyspacelen) [default: 1]\n"
 "  --tests <tests>     Comma separated list of tests to run. Available \n"
@@ -63,7 +63,7 @@ struct WorkerArgs {
   char* coordinatorLocator;
   uint64_t requests;
   uint64_t valueSize;
-  uint64_t lrangeSize;
+  uint64_t lrangeLen;
   uint64_t keySpaceLength;
   FILE* outputFile;
 };
@@ -508,7 +508,7 @@ void* lrangeWorkerThread(void* args) {
   char* coordinatorLocator = wArgs->coordinatorLocator;
   uint64_t requests = wArgs->requests;
   uint64_t valueSize = wArgs->valueSize;
-  uint64_t lrangeSize = wArgs->lrangeSize;
+  uint64_t lrangeLen = wArgs->lrangeLen;
   uint64_t keySpaceLength = wArgs->keySpaceLength;
   FILE* outputFile = wArgs->outputFile;
 
@@ -530,7 +530,7 @@ void* lrangeWorkerThread(void* args) {
     key.data = keyBuf;
 
     uint64_t reqStart = ustime();
-    ObjectArray* objArray = lrange(context, &key, 0, lrangeSize);
+    ObjectArray* objArray = lrange(context, &key, 0, lrangeLen);
     latencies[i] = ustime() - reqStart;
     freeObjectArray(objArray);
 
@@ -557,7 +557,7 @@ int main(int argc, char* argv[]) {
   uint64_t clientThreads = 1;
   uint64_t requests = 100000;
   uint64_t valueSize = 3;
-  uint64_t lrangeSize = 100;
+  uint64_t lrangeLen = 100;
   uint64_t keySpaceLength = 1;
   char* tests = "all";
   char* outputDir = NULL;
@@ -584,8 +584,8 @@ int main(int argc, char* argv[]) {
     } else if (strcmp(argv[i], "--valueSize") == 0) {
       valueSize = strtoul(argv[i+1], NULL, 10);
       i+=2;
-    } else if (strcmp(argv[i], "--lrange") == 0) {
-      lrangeSize = strtoul(argv[i+1], NULL, 10);
+    } else if (strcmp(argv[i], "--lrangelen") == 0) {
+      lrangeLen = strtoul(argv[i+1], NULL, 10);
       i+=2;
     } else if (strcmp(argv[i], "--keyspacelen") == 0) {
       keySpaceLength = strtoul(argv[i+1], NULL, 10);
@@ -630,7 +630,7 @@ int main(int argc, char* argv[]) {
   wArgs.coordinatorLocator = coordinatorLocator;
   wArgs.requests = requests;
   wArgs.valueSize = valueSize;
-  wArgs.lrangeSize = lrangeSize;
+  wArgs.lrangeLen = lrangeLen;
   wArgs.keySpaceLength = keySpaceLength;
   wArgs.outputFile = outputFile;
 

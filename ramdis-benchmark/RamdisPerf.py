@@ -67,10 +67,10 @@ if __name__ == '__main__':
     parser.add_option('--valueSize', metavar='N', dest='value_size', default=3,
             help='Size in bytes of value to read/write in '
             'GET/SET/PUSH/POP/SADD/SPOP, etc.')
-    parser.add_option('--lrange', metavar='N', dest='lrange', default=100,
-            help='Get elements [0,lrange] for LRANGE command. Maximum value '
+    parser.add_option('--lrangelen', metavar='N', dest='lrange_len', default=100,
+            help='Get elements [0,lrangelen] for LRANGE command. Maximum value '
             'is 100000.')
-    parser.add_option('--keyspacelen', metavar='N', dest='keyspacelen', 
+    parser.add_option('--keyspacelen', metavar='N', dest='key_space_len', 
             default=1,
             help='Execute operations on a random set of keys in the space '
             'from [0,keyspacelen).')
@@ -119,10 +119,12 @@ if __name__ == '__main__':
     if options.master_args != None:
         cluster_args['master_args'] = options.master_args
 
+#    theoutputdir = "s%dr%d_vs%dlrl%dksl%d" % ()
+
     client_args = {
         '--valueSize':      options.value_size,
-        '--lrange':         options.lrange,
-        '--keyspacelen':    options.keyspacelen,
+        '--lrangelen':      options.lrange_len,
+        '--keyspacelen':    options.key_space_len,
         '--outputDir':      options.output_dir
     }
 
