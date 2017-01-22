@@ -7,7 +7,7 @@ char* coordinatorLocator = NULL;
 
 // Tests GET and SET commands.
 TEST(GetSetTest, readWrite) {
-  Context* context = ramdis_connect(coordinatorLocator); 
+  Context* context = ramdis_connect(coordinatorLocator, 1); 
 
   Object key;
   key.data = (void*)"Robert Tyre Jones Jr.";
@@ -36,7 +36,7 @@ TEST(GetSetTest, readWrite) {
 }
 
 TEST(LpushTest, pushManyValues) {
-  Context* context = ramdis_connect(coordinatorLocator); 
+  Context* context = ramdis_connect(coordinatorLocator, 1); 
 
   /* Number of elements to put in the list. */
   uint32_t totalElements = (1<<13);
@@ -83,7 +83,7 @@ TEST(LpushTest, pushManyValues) {
 }
 
 TEST(RpushTest, pushManyValues) {
-  Context* context = ramdis_connect(coordinatorLocator); 
+  Context* context = ramdis_connect(coordinatorLocator, 1); 
 
   /* Number of elements to put in the list. */
   uint32_t totalElements = (1<<13);
@@ -130,7 +130,7 @@ TEST(RpushTest, pushManyValues) {
 }
 
 TEST(LpopTest, popManyValues) {
-  Context* context = ramdis_connect(coordinatorLocator); 
+  Context* context = ramdis_connect(coordinatorLocator, 1); 
 
   /* Number of elements to put in the list. */
   uint32_t totalElements = (1<<13);
@@ -173,7 +173,7 @@ TEST(LpopTest, popManyValues) {
 }
 
 TEST(RpopTest, popManyValues) {
-  Context* context = ramdis_connect(coordinatorLocator); 
+  Context* context = ramdis_connect(coordinatorLocator, 1); 
 
   /* Number of elements to put in the list. */
   uint32_t totalElements = (1<<13);
@@ -217,7 +217,7 @@ TEST(RpopTest, popManyValues) {
 
 // Tests DEL command.
 TEST(DelTest, deleteSingleObject) {
-  Context* context = ramdis_connect(coordinatorLocator); 
+  Context* context = ramdis_connect(coordinatorLocator, 1); 
 
   Object key;
   key.data = (void*)"Robert Tyre Jones Jr.";

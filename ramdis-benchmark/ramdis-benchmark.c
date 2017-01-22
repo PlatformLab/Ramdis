@@ -26,6 +26,8 @@ const char USAGE[] =
 "                      [default: 1]\n"
 "  --requests <n>      Number of requests each client should execute \n"
 "                      [default: 100000]\n"
+"  --serverSpan <n>    Number of RAMCloud servers to use for the workload. \n"
+"                      [default: 1]\n"
 "  --valueSize <n>     Size in bytes of value to read/write in \n"
 "                      GET/SET/PUSH/POP/SADD/SPOP, etc. [default: 3]\n"
 "  --lrangelen <n>     Get elements [0,lrangelen] for LRANGE command. \n"
@@ -62,6 +64,7 @@ int compareUint64_t(const void *a, const void *b) {
 struct WorkerArgs {
   char* coordinatorLocator;
   uint64_t requests;
+  uint16_t serverSpan;
   uint64_t valueSize;
   uint64_t lrangeLen;
   uint64_t keySpaceLength;
@@ -166,11 +169,12 @@ void* getWorkerThread(void* args) {
   struct WorkerArgs* wArgs = (struct WorkerArgs*)args;
   char* coordinatorLocator = wArgs->coordinatorLocator;
   uint64_t requests = wArgs->requests;
+  uint16_t serverSpan = wArgs->serverSpan;
   uint64_t valueSize = wArgs->valueSize;
   uint64_t keySpaceLength = wArgs->keySpaceLength;
   FILE* outputFile = wArgs->outputFile;
 
-  Context* context = ramdis_connect(coordinatorLocator);
+  Context* context = ramdis_connect(coordinatorLocator, serverSpan);
 
   struct WorkerStats* wStats = (struct WorkerStats*)malloc(sizeof(struct
         WorkerStats)); 
@@ -213,11 +217,12 @@ void* setWorkerThread(void* args) {
   struct WorkerArgs* wArgs = (struct WorkerArgs*)args;
   char* coordinatorLocator = wArgs->coordinatorLocator;
   uint64_t requests = wArgs->requests;
+  uint16_t serverSpan = wArgs->serverSpan;
   uint64_t valueSize = wArgs->valueSize;
   uint64_t keySpaceLength = wArgs->keySpaceLength;
   FILE* outputFile = wArgs->outputFile;
 
-  Context* context = ramdis_connect(coordinatorLocator);
+  Context* context = ramdis_connect(coordinatorLocator, serverSpan);
 
   struct WorkerStats* wStats = (struct WorkerStats*)malloc(sizeof(struct
         WorkerStats)); 
@@ -265,11 +270,12 @@ void* incrWorkerThread(void* args) {
   struct WorkerArgs* wArgs = (struct WorkerArgs*)args;
   char* coordinatorLocator = wArgs->coordinatorLocator;
   uint64_t requests = wArgs->requests;
+  uint16_t serverSpan = wArgs->serverSpan;
   uint64_t valueSize = wArgs->valueSize;
   uint64_t keySpaceLength = wArgs->keySpaceLength;
   FILE* outputFile = wArgs->outputFile;
 
-  Context* context = ramdis_connect(coordinatorLocator);
+  Context* context = ramdis_connect(coordinatorLocator, serverSpan);
 
   struct WorkerStats* wStats = (struct WorkerStats*)malloc(sizeof(struct
         WorkerStats)); 
@@ -311,11 +317,12 @@ void* lpushWorkerThread(void* args) {
   struct WorkerArgs* wArgs = (struct WorkerArgs*)args;
   char* coordinatorLocator = wArgs->coordinatorLocator;
   uint64_t requests = wArgs->requests;
+  uint16_t serverSpan = wArgs->serverSpan;
   uint64_t valueSize = wArgs->valueSize;
   uint64_t keySpaceLength = wArgs->keySpaceLength;
   FILE* outputFile = wArgs->outputFile;
 
-  Context* context = ramdis_connect(coordinatorLocator);
+  Context* context = ramdis_connect(coordinatorLocator, serverSpan);
 
   struct WorkerStats* wStats = (struct WorkerStats*)malloc(sizeof(struct
         WorkerStats)); 
@@ -363,11 +370,12 @@ void* rpushWorkerThread(void* args) {
   struct WorkerArgs* wArgs = (struct WorkerArgs*)args;
   char* coordinatorLocator = wArgs->coordinatorLocator;
   uint64_t requests = wArgs->requests;
+  uint16_t serverSpan = wArgs->serverSpan;
   uint64_t valueSize = wArgs->valueSize;
   uint64_t keySpaceLength = wArgs->keySpaceLength;
   FILE* outputFile = wArgs->outputFile;
 
-  Context* context = ramdis_connect(coordinatorLocator);
+  Context* context = ramdis_connect(coordinatorLocator, serverSpan);
 
   struct WorkerStats* wStats = (struct WorkerStats*)malloc(sizeof(struct
         WorkerStats)); 
@@ -415,11 +423,12 @@ void* lpopWorkerThread(void* args) {
   struct WorkerArgs* wArgs = (struct WorkerArgs*)args;
   char* coordinatorLocator = wArgs->coordinatorLocator;
   uint64_t requests = wArgs->requests;
+  uint16_t serverSpan = wArgs->serverSpan;
   uint64_t valueSize = wArgs->valueSize;
   uint64_t keySpaceLength = wArgs->keySpaceLength;
   FILE* outputFile = wArgs->outputFile;
 
-  Context* context = ramdis_connect(coordinatorLocator);
+  Context* context = ramdis_connect(coordinatorLocator, serverSpan);
 
   struct WorkerStats* wStats = (struct WorkerStats*)malloc(sizeof(struct
         WorkerStats)); 
@@ -461,11 +470,12 @@ void* rpopWorkerThread(void* args) {
   struct WorkerArgs* wArgs = (struct WorkerArgs*)args;
   char* coordinatorLocator = wArgs->coordinatorLocator;
   uint64_t requests = wArgs->requests;
+  uint16_t serverSpan = wArgs->serverSpan;
   uint64_t valueSize = wArgs->valueSize;
   uint64_t keySpaceLength = wArgs->keySpaceLength;
   FILE* outputFile = wArgs->outputFile;
 
-  Context* context = ramdis_connect(coordinatorLocator);
+  Context* context = ramdis_connect(coordinatorLocator, serverSpan);
 
   struct WorkerStats* wStats = (struct WorkerStats*)malloc(sizeof(struct
         WorkerStats)); 
@@ -507,12 +517,13 @@ void* lrangeWorkerThread(void* args) {
   struct WorkerArgs* wArgs = (struct WorkerArgs*)args;
   char* coordinatorLocator = wArgs->coordinatorLocator;
   uint64_t requests = wArgs->requests;
+  uint16_t serverSpan = wArgs->serverSpan;
   uint64_t valueSize = wArgs->valueSize;
   uint64_t lrangeLen = wArgs->lrangeLen;
   uint64_t keySpaceLength = wArgs->keySpaceLength;
   FILE* outputFile = wArgs->outputFile;
 
-  Context* context = ramdis_connect(coordinatorLocator);
+  Context* context = ramdis_connect(coordinatorLocator, serverSpan);
 
   struct WorkerStats* wStats = (struct WorkerStats*)malloc(sizeof(struct
         WorkerStats)); 
@@ -556,6 +567,7 @@ int main(int argc, char* argv[]) {
   uint64_t numClients = 1;
   uint64_t clientThreads = 1;
   uint64_t requests = 100000;
+  uint16_t serverSpan = 1;
   uint64_t valueSize = 3;
   uint64_t lrangeLen = 100;
   uint64_t keySpaceLength = 1;
@@ -580,6 +592,9 @@ int main(int argc, char* argv[]) {
       i+=2;
     } else if (strcmp(argv[i], "--requests") == 0) {
       requests = strtoul(argv[i+1], NULL, 10);
+      i+=2;
+    } else if (strcmp(argv[i], "--serverSpan") == 0) {
+      serverSpan = strtoul(argv[i+1], NULL, 10);
       i+=2;
     } else if (strcmp(argv[i], "--valueSize") == 0) {
       valueSize = strtoul(argv[i+1], NULL, 10);
@@ -624,11 +639,12 @@ int main(int argc, char* argv[]) {
 
   fprintf(outputFile, "Connecting to %s\n", coordinatorLocator);
 
-  Context* context = ramdis_connect(coordinatorLocator);
+  Context* context = ramdis_connect(coordinatorLocator, serverSpan);
 
   struct WorkerArgs wArgs;
   wArgs.coordinatorLocator = coordinatorLocator;
   wArgs.requests = requests;
+  wArgs.serverSpan = serverSpan;
   wArgs.valueSize = valueSize;
   wArgs.lrangeLen = lrangeLen;
   wArgs.keySpaceLength = keySpaceLength;

@@ -83,11 +83,11 @@ void appendKeyComponent(RAMCloud::Buffer* buf, const char* comp,
   buf->appendCopy(comp, compLen);
 }
 
-Context* ramdis_connect(char* locator) {
+Context* ramdis_connect(char* locator, uint16_t serverSpan) {
   Context* c = new Context();
   RAMCloud::RamCloud* client = new RAMCloud::RamCloud(locator);
   c->client = (void*)client;
-  c->tableId = client->createTable("default");
+  c->tableId = client->createTable("default", serverSpan);
   c->err = 0;
   memset(c->errmsg, '\0', sizeof(c->errmsg));
   return c;

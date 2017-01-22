@@ -83,7 +83,7 @@ extern "C" {
   } ObjectArray;
 
   /* Connection */
-  Context* ramdis_connect(char* locator);
+  Context* ramdis_connect(char* locator, uint16_t serverSpan);
   void ramdis_disconnect(Context* c);
   char* ping(Context* c, char* msg);
 

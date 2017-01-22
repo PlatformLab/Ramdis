@@ -64,6 +64,9 @@ if __name__ == '__main__':
     # Ramdis benchmark options
     parser.add_option('--tests', metavar='OPS', dest='tests',
             help='Comma seperated list of operations to benchmark.')
+    parser.add_option('--serverSpan', metavar='N', dest='server_span',
+            default=1,
+            help='Number of RAMCloud servers to use for the workload.')
     parser.add_option('--valueSize', metavar='N', dest='value_size', default=3,
             help='Size in bytes of value to read/write in '
             'GET/SET/PUSH/POP/SADD/SPOP, etc.')
@@ -119,7 +122,7 @@ if __name__ == '__main__':
     if options.master_args != None:
         cluster_args['master_args'] = options.master_args
 
-#    theoutputdir = "s%dr%d_vs%dlrl%dksl%d" % ()
+#    theoutputdir = "s%dr%d_ss%svs%dlrl%dksl%d" % ()
 
     client_args = {
         '--valueSize':      options.value_size,
