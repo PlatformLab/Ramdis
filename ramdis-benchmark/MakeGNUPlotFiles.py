@@ -108,7 +108,11 @@ if __name__ == '__main__':
             # Generate latency CDF for this experiment if needed.
             if latCDFFilename not in allfiles or srcFileMTime > getmtime(
                     join(dataDir, latCDFFilename)):
-                print "Generating %s... " % latCDFFilename,
+                if latCDFFilename not in allfiles:
+                    print "Generating %s... " % latCDFFilename,
+                else:
+                    print "Updating %s... " % latCDFFilename,
+                    
                 sys.stdout.flush()
 
                 reqLatFilenameList = []
@@ -124,7 +128,10 @@ if __name__ == '__main__':
             # Generate throughput stat for this experiment if needed.
             if tputFilename not in allfiles or srcFileMTime > getmtime(
                     join(dataDir, tputFilename)):
-                print "Generating %s... " % tputFilename,
+                if tputFilename not in allfiles:
+                    print "Generating %s... " % tputFilename,
+                else:
+                    print "Updating %s... " % tputFilename,
                 sys.stdout.flush()
 
                 execSumFilenameList = []
@@ -164,7 +171,10 @@ if __name__ == '__main__':
                     break
 
         if genTputVClients == True:
-            print "Generating %s... " % tputVClientsFilename,
+            if tputVClientsFilename not in allfiles:
+                print "Generating %s... " % tputVClientsFilename,
+            else:
+                print "Updating %s... " % tputVClientsFilename,
             sys.stdout.flush()
 
             tvcfile = open(join(dataDir, tputVClientsFilename), 'w')
