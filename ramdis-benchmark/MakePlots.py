@@ -22,7 +22,7 @@ Output Files:
 
 import sys
 from os import listdir, makedirs
-from os.path import isfile, join, getmtime, exists
+from os.path import isfile, join, getmtime, exists, basename
 from subprocess import call
 from optparse import OptionParser
 import re
@@ -206,21 +206,28 @@ if __name__ == '__main__':
     # Check to see what graphs need to be generated or updated
     graphfiles = [f for f in listdir(graphDir) if isfile(join(graphDir, f))]
     for op in experiments.keys():
-        dependencyFilename = "%s_throughput_v_clients.dat" % (op)
-        targetFilename = "%s_throughput_v_clients.svg" % (op)
+        dataFilename = join(dataDir, "%s_throughput_v_clients.dat" % (op))
+        gnuplotFilename = "%s_throughput_v_clients.gnu" % (op)
+        dependencyFilenames = [dataFilename, gnuplotFilename]
+        targetFilename = join(graphDir, "%s_throughput_v_clients.svg" % (op))
 
-        if targetFilename not in graphfiles or getmtime(join(dataDir,
-            dependencyFilename)) > getmtime(join(graphDir, targetFilename)):
-            if targetFilename not in graphfiles:
-                print "Generating %s..." % targetFilename,
-            else:
-                print "Updating %s..." % targetFilename,
-            sys.stdout.flush()
-
-            gnuplotFilename = "%s_throughput_v_clients.gnu" % op
+        makeTarget = False
+        if basename(targetFilename) not in graphfiles:
+            # If the file doesn't exist, make it
+            makeTarget = True
+            print "Generating %s..." % basename(targetFilename),
+        else:
+            # Check if the file is stale
+            for dependencyFilename in dependencyFilenames:
+                if getmtime(dependencyFilename) > getmtime(targetFilename):
+                    # If the file is stale, make it
+                    makeTarget = True
+                    print "Updating %s..." % basename(targetFilename),
+        
+        if makeTarget:
             call(["gnuplot", "-e", "inputFile='%s'; outputFile='%s'" %
-                (join(dataDir, dependencyFilename), join(graphDir,
-                    targetFilename)), gnuplotFilename])
-
+                (dataFilename, targetFilename), gnuplotFilename])
             print "Done."
+
+
         
