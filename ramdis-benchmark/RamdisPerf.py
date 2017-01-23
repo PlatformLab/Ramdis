@@ -18,18 +18,90 @@ def flatten_args(args):
     return " ".join(["%s %s" % (name, value)
             for name, value in args.iteritems()])
 
+def runExperiment(options, servers, replicas, serverSpan, valueSize,
+        keySpaceLen, test, clients):
+    # Formulate a directory name based on the experiment parameters
+    dataDir = "s%dr%d_ss%dvs%dksl%d" % (
+            servers,
+            replicas,
+            serverSpan,
+            valueSize,
+            keySpaceLen)
+    
+    if not exists(join(options.output_dir, dataDir)):
+        makedirs(join(options.output_dir, dataDir))
+
+    cluster_args = {
+        'num_servers': servers,
+        'replicas':    replicas,
+        'backup_disks_per_server': options.backup_disks_per_server,
+        'disjunct':    options.disjunct,
+        'transport':   options.transport,
+        'timeout':     options.timeout,
+        'debug':       options.debug,
+        'log_dir':     options.log_dir,
+        'log_level':   options.log_level,
+        'share_hosts': True,
+        'verbose':     options.verbose
+    }
+
+    if options.master_args != None:
+        cluster_args['master_args'] = options.master_args
+
+    client_args = {
+        '--serverSpan': serverSpan,
+        '--valueSize': valueSize,
+        '--keyspacelen': keySpaceLen,
+        '--tests': test,
+        '--outputDir': join(options.output_dir, dataDir)
+    }
+
+    if clients % 4 == 0:
+        cluster_args['num_clients'] = int(clients / 4)
+        client_args['--threads'] = 4
+    elif clients % 3 == 0:
+        cluster_args['num_clients'] = int(clients / 3)
+        client_args['--threads'] = 3
+    elif clients % 2 == 0:
+        cluster_args['num_clients'] = int(clients / 2)
+        client_args['--threads'] = 2
+    else:
+        cluster_args['num_clients'] = clients
+        client_args['--threads'] = 1
+
+    if not options.per_client_ops:
+        client_args['--requests'] = int(options.total_ops / clients)
+    else:
+        client_args['--requests'] = options.per_client_ops
+
+    totalOps = 0
+    if not options.per_client_ops:
+        totalOps = options.total_ops
+    else:
+        totalOps = options.per_client_ops * clients
+
+    print "Running: s=%d, r=%d, ss=%d, vs=%d, ksl=%d, test=%s, c=%d (%dx%d), to=%d ..." % (servers, replicas, serverSpan, valueSize, keySpaceLen, test, clients, cluster_args['num_clients'], client_args['--threads'], totalOps),
+    sys.stdout.flush()
+
+    cluster.run(client="../ramdis-benchmark/ramdis-benchmark %s" % (flatten_args(client_args)), **cluster_args)
+
+    print ""
+
+
 if __name__ == '__main__':
     parser = OptionParser(description=
             'Run Ramdis performance benchmarks on a RAMCloud cluster.',
             usage='%prog [options]',
             conflict_handler='resolve')
     # Cluster options
-    parser.add_option('--servers', type=int, default=4,
+    parser.add_option('--servers', default='4',
             metavar='N', dest='num_servers',
-            help='Number of hosts on which to run servers')
-    parser.add_option('--replicas', type=int, default=3,
+            help='Comma separated list of number of hosts on which to run '
+                 'servers')
+    parser.add_option('--replicas', default='3',
             metavar='N', dest='replicas',
-            help='Number of disk backup copies for each segment')
+            help='Comma separated list of number of disk backup copies for '
+                 'each segment')
     parser.add_option('--numBackupDisks', type=int, default=2,
             metavar='N', dest='backup_disks_per_server',
             help='Number of backup disks to use on each server host '
@@ -64,128 +136,85 @@ if __name__ == '__main__':
             help='Print progress messages')
 
     # Ramdis benchmark options
-    parser.add_option('--tests', metavar='OPS', dest='tests',
-            help='Comma seperated list of operations to benchmark.')
-    parser.add_option('--serverSpan', metavar='N', dest='server_span',
-            type=int, default=1,
-            help='Number of RAMCloud servers to use for the workload.')
-    parser.add_option('--valueSize', metavar='N', dest='value_size', 
-            type=int, default=3,
-            help='Size in bytes of value to read/write in '
-            'GET/SET/PUSH/POP/SADD/SPOP, etc.')
-    parser.add_option('--lrangelen', metavar='N', dest='lrange_len', 
-            type=int, default=100,
-            help='Get elements [0,lrangelen] for LRANGE command. Maximum value '
-            'is 100000.')
-    parser.add_option('--keyspacelen', metavar='N', dest='key_space_len', 
-            type=int, default=1,
-            help='Execute operations on a random set of keys in the space '
-            'from [0,keyspacelen).')
-    parser.add_option('--clients', metavar='N', dest='clients',
+    parser.add_option('--tests',
+            default='get,set,incr,lpush,rpush,lpop,rpop,lrange',
+            metavar='OPS', dest='tests',
+            help='Comma separated list of operations to benchmark.')
+    parser.add_option('--serverSpan', default='1',
+            metavar='N', dest='server_span',
+            help='Comma separated list of number of RAMCloud servers to use '
+                 'for the workload.')
+    parser.add_option('--valueSize', default='3',
+            metavar='N', dest='value_size', 
+            help='Comma separated list of size in bytes of value to '
+                 'read/write in GET/SET/PUSH/POP/SADD/SPOP, etc.')
+    parser.add_option('--lrangelen', default='100',
+            metavar='N', dest='lrange_len', 
+            help='Comma separated list of ranges [0,lrangelen] for LRANGE '
+                 'command. Maximum value is 100000.')
+    parser.add_option('--keyspacelen', default='1',
+            metavar='N', dest='key_space_len', 
+            help='Comma separated list of key space sizes. Will make '
+                 'operations execute on a random set of keys in the space '
+                 'from [0,keyspacelen).')
+    parser.add_option('--clients', default='1',
+            metavar='N', dest='clients',
             help='Comma seperated list of number of clients to benchmark '
-            'each operation with.')
-    parser.add_option('--totalOps', metavar='nOPS', dest='total_ops',
-            type=int,
+                 'each operation with.')
+    parser.add_option('--totalOps', 
+            metavar='nOPS', dest='total_ops', type=int,
             help='Total number of operations to execute for each test by '
-            'all clients.')
-    parser.add_option('--perClientOps', metavar='cOPS', dest='per_client_ops', 
-            type=int,
+                 'all clients.')
+    parser.add_option('--perClientOps', 
+            metavar='cOPS', dest='per_client_ops', type=int,
             help='Total number of operations to execute for each test by '
-            'each clients.')
-    parser.add_option('--outputDir', metavar='DIR', dest='output_dir',
+                 'each clients.')
+    parser.add_option('--outputDir', 
+            metavar='DIR', dest='output_dir',
             help='Directory for benchmark output. Benchmark will create a '
             'subdirectory named according to the experiment parameters where '
             'data files will be stored.')
 
     (options, args) = parser.parse_args()
 
-    if not options.tests:
-        print "ERROR: Must specify tests with --test"
-        sys.exit()
-
-    if not options.clients:
-        print "ERROR: Must specify number of clients to run with --clients"
-        sys.exit()
-
+    # Check options
     if not options.total_ops and not options.per_client_ops:
         print "ERROR: Must specify either --totalOps or --perClientOps"
         sys.exit()
 
-    cluster_args = {
-        'num_servers': options.num_servers,
-        'replicas':    options.replicas,
-        'backup_disks_per_server': options.backup_disks_per_server,
-        'disjunct':    options.disjunct,
-        'transport':   options.transport,
-        'timeout':     options.timeout,
-        'debug':       options.debug,
-        'log_dir':     options.log_dir,
-        'log_level':   options.log_level,
-        'share_hosts': True,
-        'verbose':     options.verbose
-    }
-
-    if options.master_args != None:
-        cluster_args['master_args'] = options.master_args
-
-    # Formulate a directory name based on the experiment parameters
-    dataDir = "s%dr%d_ss%dvs%dlrl%dksl%d" % (
-            options.num_servers,
-            options.replicas,
-            options.server_span,
-            options.value_size,
-            options.lrange_len,
-            options.key_space_len)
-
-    client_args = {
-        '--valueSize':      options.value_size,
-        '--lrangelen':      options.lrange_len,
-        '--keyspacelen':    options.key_space_len,
-        '--outputDir':      join(options.output_dir, dataDir)
-    }
+    if options.total_ops and options.per_client_ops:
+        print "ERROR: Must specify either --totalOps or --perClientOps, not "
+        "both"
 
     # Create output directory if it doesn't exist
     if not exists(options.output_dir):
         makedirs(options.output_dir)
 
-    if not exists(join(options.output_dir, dataDir)):
-        makedirs(join(options.output_dir, dataDir))
+    # Convert parameter-sweep type options from csvs to lists
+    serversList = [int(servers) for servers in options.num_servers.split(',')]
+    replicasList = [int(replicas) for replicas in options.replicas.split(',')]
+    serverSpanList = [int(serverSpan) for serverSpan in options.server_span.split(',')]
+    valueSizeList = [int(valueSize) for valueSize in options.value_size.split(',')]
+    lrangeLenList = [int(lrangeLen) for lrangeLen in options.lrange_len.split(',')]
+    keySpaceLenList = [int(keySpaceLen) for keySpaceLen in options.key_space_len.split(',')]
+    testList = options.tests.split(',')
+    clientsList = [int(clients) for clients in options.clients.split(',')]
 
-    # Run tests
-    for test in options.tests.split(','):
-        client_args['--tests'] = test
+    for servers in serversList:
+        for replicas in replicasList:
+            # Sanity checks
+            if servers < replicas + 1: 
+                print "ERROR: Cannot execute (servers=%s,replicas=%s) "
+                "parameter combination, servers must be at least 1 greater "
+                "than replicas" % (num_servers, replicas)
+                continue
 
-        for c in options.clients.split(','):
-            if int(c) % 4 == 0:
-                cluster_args['num_clients'] = int(int(c) / 4)
-                client_args['--threads'] = 4
-            elif int(c) % 3 == 0:
-                cluster_args['num_clients'] = int(int(c) / 3)
-                client_args['--threads'] = 3
-            elif int(c) % 2 == 0:
-                cluster_args['num_clients'] = int(int(c) / 2)
-                client_args['--threads'] = 2
-            else:
-                cluster_args['num_clients'] = int(c)
-                client_args['--threads'] = 1
-           
-            if not options.per_client_ops:
-                client_args['--requests'] = int(options.total_ops / int(c))
-            else:
-                client_args['--requests'] = options.per_client_ops
+            for serverSpan in serverSpanList:
+                for valueSize in valueSizeList:
+                    for keySpaceLen in keySpaceLenList:
+                        for test in testList:
+                            for clients in clientsList:
+                                runExperiment(options, servers, replicas,
+                                        serverSpan, valueSize, keySpaceLen,
+                                        test, clients)
 
-            totalOps = 0
-            if not options.per_client_ops:
-                totalOps = options.total_ops
-            else:
-                totalOps = options.per_client_ops * int(c)
-
-            print "===== TEST: %s CLIENTS: %d (%dx%d) OPS: %s =====" % (test, 
-                    int(c), 
-                    int(cluster_args['num_clients']), 
-                    int(client_args['--threads']),
-                    totalOps)
-
-            cluster.run(client="../ramdis-benchmark/ramdis-benchmark %s" % (flatten_args(client_args)), **cluster_args)
-
-            print ""
