@@ -77,6 +77,7 @@ struct WorkerArgs {
 struct WorkerStats {
   uint64_t* latencies;
   uint64_t requestsExecuted;
+  uint64_t execTime;
 };
 
 void freeWorkerStats(struct WorkerStats* wStats) {
@@ -165,7 +166,8 @@ void reportStats(char* test, uint64_t totalTime, struct WorkerStats** wStats,
       fprintf(outputFile, "Writing data file: %s\n", execSumFN);
 
       /* Total run time in seconds. */
-      fprintf(execSumFile, "totalTime %.2f\n", (float)totalTime / 1000000.0);
+      fprintf(execSumFile, "totalTime %.2f\n", 
+          (float)wStats[i]->execTime / 1000000.0);
       fprintf(execSumFile, "totalOps %" PRId64 "\n", 
           wStats[i]->requestsExecuted);
 
@@ -222,6 +224,7 @@ void* getWorkerThread(void* args) {
   
   wStats->latencies = latencies;
   wStats->requestsExecuted = i;
+  wStats->execTime = testEnd - testStart;
 
   ramdis_disconnect(context);
 
@@ -281,6 +284,7 @@ void* setWorkerThread(void* args) {
 
   wStats->latencies = latencies;
   wStats->requestsExecuted = i;
+  wStats->execTime = testEnd - testStart;
 
   ramdis_disconnect(context);
 
@@ -334,6 +338,7 @@ void* incrWorkerThread(void* args) {
 
   wStats->latencies = latencies;
   wStats->requestsExecuted = i;
+  wStats->execTime = testEnd - testStart;
 
   ramdis_disconnect(context);
 
@@ -393,6 +398,7 @@ void* lpushWorkerThread(void* args) {
 
   wStats->latencies = latencies;
   wStats->requestsExecuted = i;
+  wStats->execTime = testEnd - testStart;
 
   ramdis_disconnect(context);
 
@@ -452,6 +458,7 @@ void* rpushWorkerThread(void* args) {
 
   wStats->latencies = latencies;
   wStats->requestsExecuted = i;
+  wStats->execTime = testEnd - testStart;
 
   ramdis_disconnect(context);
 
@@ -505,6 +512,7 @@ void* lpopWorkerThread(void* args) {
 
   wStats->latencies = latencies;
   wStats->requestsExecuted = i;
+  wStats->execTime = testEnd - testStart;
 
   ramdis_disconnect(context);
 
@@ -558,6 +566,7 @@ void* rpopWorkerThread(void* args) {
 
   wStats->latencies = latencies;
   wStats->requestsExecuted = i;
+  wStats->execTime = testEnd - testStart;
 
   ramdis_disconnect(context);
 
@@ -613,6 +622,7 @@ void* lrangeWorkerThread(void* args) {
 
   wStats->latencies = latencies;
   wStats->requestsExecuted = i;
+  wStats->execTime = testEnd - testStart;
 
   ramdis_disconnect(context);
 
