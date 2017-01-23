@@ -24,8 +24,10 @@ const char USAGE[] =
 "  --numClients <n>    Total number of clients running [default: 1].\n"
 "  --threads <n>       Number of benchmark client threads to run in parallel\n"
 "                      [default: 1]\n"
-"  --requests <n>      Number of requests each client should execute \n"
-"                      [default: 100000]\n"
+"  --requests <n>      Number of requests each client thread should \n"
+"                      execute. [default: 100000] \n"
+"  --timeLimit <t>     Limit on the amount of time for client threads to \n"
+"                      run, in seconds. [default: 20] \n"
 "  --serverSpan <n>    Number of RAMCloud servers to use for the workload. \n"
 "                      [default: 1]\n"
 "  --valueSize <n>     Size in bytes of value to read/write in \n"
@@ -64,6 +66,7 @@ int compareUint64_t(const void *a, const void *b) {
 struct WorkerArgs {
   char* coordinatorLocator;
   uint64_t requests;
+  uint64_t timeLimit;
   uint16_t serverSpan;
   uint64_t valueSize;
   uint64_t lrangeLen;
@@ -73,6 +76,7 @@ struct WorkerArgs {
 
 struct WorkerStats {
   uint64_t* latencies;
+  uint64_t requestsExecuted;
 };
 
 void freeWorkerStats(struct WorkerStats* wStats) {
@@ -85,7 +89,8 @@ void reportStats(char* test, uint64_t totalTime, struct WorkerStats** wStats,
     uint64_t requests, char* outputDir, FILE* outputFile) {
   uint64_t i;
   for (i = 0; i < clientThreads; i++) {
-    qsort(wStats[i]->latencies, requests, sizeof(uint64_t), compareUint64_t);
+    qsort(wStats[i]->latencies, wStats[i]->requestsExecuted, sizeof(uint64_t), 
+        compareUint64_t);
   }
 
   if (totalTime / 1000000 > 0) {
@@ -96,22 +101,26 @@ void reportStats(char* test, uint64_t totalTime, struct WorkerStats** wStats,
     fprintf(outputFile, "Total Time: %" PRId64 "us\n", totalTime);
   }
 
+  uint64_t totalRequestsExecuted = 0;
+  for (i = 0; i < clientThreads; i++)
+    totalRequestsExecuted += wStats[i]->requestsExecuted;
+
   fprintf(outputFile, "Average Request Rate: %.2f op/s\n", 
-      (float)(requests * clientThreads) / ((float)totalTime / 1000000.0));
+      (float)(totalRequestsExecuted) / ((float)totalTime / 1000000.0));
 
   for (i = 0; i < clientThreads; i++) {
     fprintf(outputFile, "Client %d/%d Stats:\n", clientIndex * clientThreads + i + 1, 
         numClients * clientThreads);
     fprintf(outputFile, "\tp50 Latency: %" PRId64 "us\n", 
-        wStats[i]->latencies[requests/2]);
+        wStats[i]->latencies[wStats[i]->requestsExecuted/2]);
     fprintf(outputFile, "\tp90 Latency: %" PRId64 "us\n", 
-        wStats[i]->latencies[requests*90/100]);
+        wStats[i]->latencies[wStats[i]->requestsExecuted*90/100]);
     fprintf(outputFile, "\tp95 Latency: %" PRId64 "us\n", 
-        wStats[i]->latencies[requests*95/100]);
+        wStats[i]->latencies[wStats[i]->requestsExecuted*95/100]);
     fprintf(outputFile, "\tp99 Latency: %" PRId64 "us\n", 
-        wStats[i]->latencies[requests*99/100]);
+        wStats[i]->latencies[wStats[i]->requestsExecuted*99/100]);
     fprintf(outputFile, "\tp99.9 Latency: %" PRId64 "us\n", 
-        wStats[i]->latencies[requests*999/1000]);
+        wStats[i]->latencies[wStats[i]->requestsExecuted*999/1000]);
   }
 
   /* Write performance data to files. */
@@ -135,7 +144,7 @@ void reportStats(char* test, uint64_t totalTime, struct WorkerStats** wStats,
       fprintf(outputFile, "Writing data file: %s\n", reqLatFN);
 
       uint64_t j;
-      for (j = 0; j < requests; j++) {
+      for (j = 0; j < wStats[i]->requestsExecuted; j++) {
         fprintf(reqLatFile, "%" PRId64 "\n", wStats[i]->latencies[j]);
       }
 
@@ -157,7 +166,8 @@ void reportStats(char* test, uint64_t totalTime, struct WorkerStats** wStats,
 
       /* Total run time in seconds. */
       fprintf(execSumFile, "totalTime %.2f\n", (float)totalTime / 1000000.0);
-      fprintf(execSumFile, "totalOps %" PRId64 "\n", requests);
+      fprintf(execSumFile, "totalOps %" PRId64 "\n", 
+          wStats[i]->requestsExecuted);
 
       fclose(execSumFile);
     }
@@ -169,6 +179,7 @@ void* getWorkerThread(void* args) {
   struct WorkerArgs* wArgs = (struct WorkerArgs*)args;
   char* coordinatorLocator = wArgs->coordinatorLocator;
   uint64_t requests = wArgs->requests;
+  uint64_t timeLimit = wArgs->timeLimit;
   uint16_t serverSpan = wArgs->serverSpan;
   uint64_t valueSize = wArgs->valueSize;
   uint64_t keySpaceLength = wArgs->keySpaceLength;
@@ -188,6 +199,10 @@ void* getWorkerThread(void* args) {
   uint64_t progressUnit = (requests/100) > 0 ? (requests/100) : 1;
   uint64_t testStart = ustime();
   for (i = 0; i < requests; i++) {
+    if (ustime() - testStart > timeLimit * 1000000) {
+      break;
+    }
+
     snprintf(keyBuf, 16, "%015d", rand() % keySpaceLength);
     key.data = keyBuf;
 
@@ -206,6 +221,7 @@ void* getWorkerThread(void* args) {
   uint64_t testEnd = ustime(); 
   
   wStats->latencies = latencies;
+  wStats->requestsExecuted = i;
 
   ramdis_disconnect(context);
 
@@ -217,6 +233,7 @@ void* setWorkerThread(void* args) {
   struct WorkerArgs* wArgs = (struct WorkerArgs*)args;
   char* coordinatorLocator = wArgs->coordinatorLocator;
   uint64_t requests = wArgs->requests;
+  uint64_t timeLimit = wArgs->timeLimit;
   uint16_t serverSpan = wArgs->serverSpan;
   uint64_t valueSize = wArgs->valueSize;
   uint64_t keySpaceLength = wArgs->keySpaceLength;
@@ -242,6 +259,10 @@ void* setWorkerThread(void* args) {
   uint64_t progressUnit = (requests/100) > 0 ? (requests/100) : 1;
   uint64_t testStart = ustime();
   for (i = 0; i < requests; i++) {
+    if (ustime() - testStart > timeLimit * 1000000) {
+      break;
+    }
+
     snprintf(keyBuf, 16, "%015d", rand() % keySpaceLength);
     key.data = keyBuf;
 
@@ -259,6 +280,7 @@ void* setWorkerThread(void* args) {
   uint64_t testEnd = ustime(); 
 
   wStats->latencies = latencies;
+  wStats->requestsExecuted = i;
 
   ramdis_disconnect(context);
 
@@ -270,6 +292,7 @@ void* incrWorkerThread(void* args) {
   struct WorkerArgs* wArgs = (struct WorkerArgs*)args;
   char* coordinatorLocator = wArgs->coordinatorLocator;
   uint64_t requests = wArgs->requests;
+  uint64_t timeLimit = wArgs->timeLimit;
   uint16_t serverSpan = wArgs->serverSpan;
   uint64_t valueSize = wArgs->valueSize;
   uint64_t keySpaceLength = wArgs->keySpaceLength;
@@ -289,6 +312,10 @@ void* incrWorkerThread(void* args) {
   uint64_t progressUnit = (requests/100) > 0 ? (requests/100) : 1;
   uint64_t testStart = ustime();
   for (i = 0; i < requests; i++) {
+    if (ustime() - testStart > timeLimit * 1000000) {
+      break;
+    }
+
     snprintf(keyBuf, 16, "%015d", rand() % keySpaceLength);
     key.data = keyBuf;
 
@@ -306,6 +333,7 @@ void* incrWorkerThread(void* args) {
   uint64_t testEnd = ustime(); 
 
   wStats->latencies = latencies;
+  wStats->requestsExecuted = i;
 
   ramdis_disconnect(context);
 
@@ -317,6 +345,7 @@ void* lpushWorkerThread(void* args) {
   struct WorkerArgs* wArgs = (struct WorkerArgs*)args;
   char* coordinatorLocator = wArgs->coordinatorLocator;
   uint64_t requests = wArgs->requests;
+  uint64_t timeLimit = wArgs->timeLimit;
   uint16_t serverSpan = wArgs->serverSpan;
   uint64_t valueSize = wArgs->valueSize;
   uint64_t keySpaceLength = wArgs->keySpaceLength;
@@ -342,6 +371,10 @@ void* lpushWorkerThread(void* args) {
   uint64_t progressUnit = (requests/100) > 0 ? (requests/100) : 1;
   uint64_t testStart = ustime();
   for (i = 0; i < requests; i++) {
+    if (ustime() - testStart > timeLimit * 1000000) {
+      break;
+    }
+
     snprintf(keyBuf, 16, "%015d", rand() % keySpaceLength);
     key.data = keyBuf;
 
@@ -359,6 +392,7 @@ void* lpushWorkerThread(void* args) {
   uint64_t testEnd = ustime(); 
 
   wStats->latencies = latencies;
+  wStats->requestsExecuted = i;
 
   ramdis_disconnect(context);
 
@@ -370,6 +404,7 @@ void* rpushWorkerThread(void* args) {
   struct WorkerArgs* wArgs = (struct WorkerArgs*)args;
   char* coordinatorLocator = wArgs->coordinatorLocator;
   uint64_t requests = wArgs->requests;
+  uint64_t timeLimit = wArgs->timeLimit;
   uint16_t serverSpan = wArgs->serverSpan;
   uint64_t valueSize = wArgs->valueSize;
   uint64_t keySpaceLength = wArgs->keySpaceLength;
@@ -395,6 +430,10 @@ void* rpushWorkerThread(void* args) {
   uint64_t progressUnit = (requests/100) > 0 ? (requests/100) : 1;
   uint64_t testStart = ustime();
   for (i = 0; i < requests; i++) {
+    if (ustime() - testStart > timeLimit * 1000000) {
+      break;
+    }
+
     snprintf(keyBuf, 16, "%015d", rand() % keySpaceLength);
     key.data = keyBuf;
 
@@ -412,6 +451,7 @@ void* rpushWorkerThread(void* args) {
   uint64_t testEnd = ustime(); 
 
   wStats->latencies = latencies;
+  wStats->requestsExecuted = i;
 
   ramdis_disconnect(context);
 
@@ -423,6 +463,7 @@ void* lpopWorkerThread(void* args) {
   struct WorkerArgs* wArgs = (struct WorkerArgs*)args;
   char* coordinatorLocator = wArgs->coordinatorLocator;
   uint64_t requests = wArgs->requests;
+  uint64_t timeLimit = wArgs->timeLimit;
   uint16_t serverSpan = wArgs->serverSpan;
   uint64_t valueSize = wArgs->valueSize;
   uint64_t keySpaceLength = wArgs->keySpaceLength;
@@ -442,6 +483,10 @@ void* lpopWorkerThread(void* args) {
   uint64_t progressUnit = (requests/100) > 0 ? (requests/100) : 1;
   uint64_t testStart = ustime();
   for (i = 0; i < requests; i++) {
+    if (ustime() - testStart > timeLimit * 1000000) {
+      break;
+    }
+
     snprintf(keyBuf, 16, "%015d", rand() % keySpaceLength);
     key.data = keyBuf;
 
@@ -459,6 +504,7 @@ void* lpopWorkerThread(void* args) {
   uint64_t testEnd = ustime(); 
 
   wStats->latencies = latencies;
+  wStats->requestsExecuted = i;
 
   ramdis_disconnect(context);
 
@@ -470,6 +516,7 @@ void* rpopWorkerThread(void* args) {
   struct WorkerArgs* wArgs = (struct WorkerArgs*)args;
   char* coordinatorLocator = wArgs->coordinatorLocator;
   uint64_t requests = wArgs->requests;
+  uint64_t timeLimit = wArgs->timeLimit;
   uint16_t serverSpan = wArgs->serverSpan;
   uint64_t valueSize = wArgs->valueSize;
   uint64_t keySpaceLength = wArgs->keySpaceLength;
@@ -489,6 +536,10 @@ void* rpopWorkerThread(void* args) {
   uint64_t progressUnit = (requests/100) > 0 ? (requests/100) : 1;
   uint64_t testStart = ustime();
   for (i = 0; i < requests; i++) {
+    if (ustime() - testStart > timeLimit * 1000000) {
+      break;
+    }
+
     snprintf(keyBuf, 16, "%015d", rand() % keySpaceLength);
     key.data = keyBuf;
 
@@ -506,6 +557,7 @@ void* rpopWorkerThread(void* args) {
   uint64_t testEnd = ustime(); 
 
   wStats->latencies = latencies;
+  wStats->requestsExecuted = i;
 
   ramdis_disconnect(context);
 
@@ -517,6 +569,7 @@ void* lrangeWorkerThread(void* args) {
   struct WorkerArgs* wArgs = (struct WorkerArgs*)args;
   char* coordinatorLocator = wArgs->coordinatorLocator;
   uint64_t requests = wArgs->requests;
+  uint64_t timeLimit = wArgs->timeLimit;
   uint16_t serverSpan = wArgs->serverSpan;
   uint64_t valueSize = wArgs->valueSize;
   uint64_t lrangeLen = wArgs->lrangeLen;
@@ -537,6 +590,10 @@ void* lrangeWorkerThread(void* args) {
   uint64_t progressUnit = (requests/100) > 0 ? (requests/100) : 1;
   uint64_t testStart = ustime();
   for (i = 0; i < requests; i++) {
+    if (ustime() - testStart > timeLimit * 1000000) {
+      break;
+    }
+
     snprintf(keyBuf, 16, "%015d", rand() % keySpaceLength);
     key.data = keyBuf;
 
@@ -555,6 +612,7 @@ void* lrangeWorkerThread(void* args) {
   uint64_t testEnd = ustime(); 
 
   wStats->latencies = latencies;
+  wStats->requestsExecuted = i;
 
   ramdis_disconnect(context);
 
@@ -567,6 +625,7 @@ int main(int argc, char* argv[]) {
   uint64_t numClients = 1;
   uint64_t clientThreads = 1;
   uint64_t requests = 100000;
+  uint64_t timeLimit = 20;
   uint16_t serverSpan = 1;
   uint64_t valueSize = 3;
   uint64_t lrangeLen = 100;
@@ -592,6 +651,9 @@ int main(int argc, char* argv[]) {
       i+=2;
     } else if (strcmp(argv[i], "--requests") == 0) {
       requests = strtoul(argv[i+1], NULL, 10);
+      i+=2;
+    } else if (strcmp(argv[i], "--timeLimit") == 0) {
+      timeLimit = strtoul(argv[i+1], NULL, 10);
       i+=2;
     } else if (strcmp(argv[i], "--serverSpan") == 0) {
       serverSpan = strtoul(argv[i+1], NULL, 10);
@@ -631,7 +693,7 @@ int main(int argc, char* argv[]) {
     outputFile = fopen(logFile, "w");
     if (outputFile == NULL) {
       fprintf(stderr, "ERROR: Can't open output file: %s\n", logFile);
-      return;
+      return -1;
     }
   } else {
     outputFile = stdout;
@@ -644,6 +706,7 @@ int main(int argc, char* argv[]) {
   struct WorkerArgs wArgs;
   wArgs.coordinatorLocator = coordinatorLocator;
   wArgs.requests = requests;
+  wArgs.timeLimit = timeLimit;
   wArgs.serverSpan = serverSpan;
   wArgs.valueSize = valueSize;
   wArgs.lrangeLen = lrangeLen;
