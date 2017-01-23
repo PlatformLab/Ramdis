@@ -53,6 +53,7 @@ def runExperiment(options, servers, replicas, serverSpan, valueSize,
         '--valueSize': valueSize,
         '--keyspacelen': keySpaceLen,
         '--tests': test,
+        '--timeLimit': options.time_limit,
         '--outputDir': join(options.output_dir, dataDir)
     }
 
@@ -169,6 +170,11 @@ if __name__ == '__main__':
             metavar='cOPS', dest='per_client_ops', type=int,
             help='Total number of operations to execute for each test by '
                  'each clients.')
+    parser.add_option('--timeLimit', default=20,
+            metavar='L', dest='time_limit', type=int,
+            help='Time limit, in seconds, for clients to run. Clients will '
+                 'finish executing if they reach this time limit without '
+                 'completing their request quota.')
     parser.add_option('--outputDir', 
             metavar='DIR', dest='output_dir',
             help='Directory for benchmark output. Benchmark will create a '
